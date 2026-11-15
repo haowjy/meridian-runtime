@@ -7,7 +7,8 @@
 import OpenAI from "openai";
 import type { ProviderConfig } from "../../domain/index.js";
 import type { ProviderAdapter } from "../../ports/provider-adapter.js";
-import { OPENAI_ENV_OPTOUT, providerClientOptions } from "../provider-http-error.js";
+import { bearerClientOptions, clientForRequest } from "../credentials.js";
+import { OPENAI_ENV_OPTOUT, providerClientOptions, providerFetch } from "../provider-http-error.js";
 import { streamProvider } from "../provider-stream.js";
 import { toOpenAIResponsesParams } from "./request-map.js";
 import {
@@ -17,10 +18,14 @@ import {
 } from "./stream-collect.js";
 
 export function createOpenAIResponsesAdapter(config: ProviderConfig): ProviderAdapter {
-  const client = new OpenAI({
+  const own = new OpenAI({
     ...providerClientOptions(config, "https://api.openai.com/v1"),
     ...OPENAI_ENV_OPTOUT,
+    ...bearerClientOptions(config.auth, providerFetch),
   });
+  const clientFor = clientForRequest(config, own, (credential) =>
+    own.withOptions(bearerClientOptions(credential, providerFetch)),
+  );
   const providerId = config.id;
 
   return {
@@ -30,7 +35,7 @@ export function createOpenAIResponsesAdapter(config: ProviderConfig): ProviderAd
         start: { type: "start", model: model.id, provider: providerId },
         signal: request.signal,
         open: () =>
-          client.responses.create(toOpenAIResponsesParams(request, model, call), {
+          clientFor(request).responses.create(toOpenAIResponsesParams(request, model, call), {
             signal: request.signal,
           }),
         events: (event) => eventsFromResponseStreamEvent(event, acc),

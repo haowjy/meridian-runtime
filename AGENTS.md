@@ -90,4 +90,4 @@ what changed for a consumer. Any model may merge a reviewed PR with green CI.
 
 ## Using a change from Flow before it is published
 
-See `packages/gateway/AGENTS.md`.
+See [`packages/gateway/AGENTS.md`](packages/gateway/AGENTS.md#trying-a-change-in-flow-before-it-is-published).

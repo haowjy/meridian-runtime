@@ -8,8 +8,9 @@
  * warning; the explicit key still wins.
  */
 import { ApiError, GoogleGenAI } from "@google/genai";
-import type { ProviderConfig } from "../../domain/index.js";
+import type { ProviderConfig, ProviderCredential } from "../../domain/index.js";
 import type { ProviderAdapter } from "../../ports/provider-adapter.js";
+import { bearerClientOptions, clientForRequest } from "../credentials.js";
 import { streamProvider } from "../provider-stream.js";
 import { toGeminiParams } from "./request-map.js";
 import {
@@ -66,14 +67,23 @@ export function geminiErrorShape(err: unknown): unknown {
   }
 }
 
-export function createGeminiAdapter(config: ProviderConfig): ProviderAdapter {
-  const client = new GoogleGenAI({
-    // Self-hosted and mock endpoints need no key, but the SDK warns without one.
-    apiKey: config.auth?.apiKey || "not-needed",
+function newClient(config: ProviderConfig, credential: ProviderCredential | undefined) {
+  const { apiKey, fetch } = bearerClientOptions(credential, globalThis.fetch);
+  return new GoogleGenAI({
+    apiKey,
     vertexai: false,
     apiVersion: "v1beta",
-    httpOptions: { baseUrl: config.baseUrl ?? DEFAULT_BASE_URL, headers: config.auth?.headers },
+    httpOptions: {
+      baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
+      headers: config.headers,
+      ...(credential && "accessToken" in credential ? { fetch } : {}),
+    },
   });
+}
+
+export function createGeminiAdapter(config: ProviderConfig): ProviderAdapter {
+  const own = newClient(config, config.auth);
+  const clientFor = clientForRequest(config, own, (credential) => newClient(config, credential));
   const providerId = config.id;
 
   return {
@@ -82,7 +92,8 @@ export function createGeminiAdapter(config: ProviderConfig): ProviderAdapter {
       return streamProvider({
         start: { type: "start", model: model.id, provider: providerId },
         signal: request.signal,
-        open: () => client.models.generateContentStream(toGeminiParams(request, model, call)),
+        open: () =>
+          clientFor(request).models.generateContentStream(toGeminiParams(request, model, call)),
         normalizeError: geminiErrorShape,
         events: (chunk) => eventsFromGeminiChunk(chunk, acc),
         result: () => buildGenerateResult(acc),
