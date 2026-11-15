@@ -1,14 +1,12 @@
 /**
- * Gateway port: the provider-neutral interface (stream/listModels)
- * the rest of the runtime depends on instead of any concrete provider.
+ * Gateway port: the provider-neutral interface (stream/listModels) a host depends on instead of
+ * any concrete provider.
  *
- * This is the top-level port that the orchestrator and turn runner consume.
- * They call `gateway.stream(request)` to get an AsyncIterable<StreamEvent>.
- * They never know which provider is behind the call.
+ * A caller runs `gateway.stream(request)` to get an AsyncIterable<StreamEvent> and never knows
+ * which provider is behind the call.
  *
- * Why a port: adapters are DI/config-driven (see create-gateway.ts). The
- * runtime composition root wires the right adapter based on GatewayConfig,
- * and route handlers never import concrete adapter factories.
+ * Why a port: adapters are chosen by config (see create-gateway.ts). The host builds the gateway
+ * once from GatewayConfig and never imports a concrete adapter factory.
  */
 import type { GenerateRequest, ModelInfo, StreamEvent } from "../domain/index.js";
 

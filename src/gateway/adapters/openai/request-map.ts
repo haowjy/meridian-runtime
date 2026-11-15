@@ -19,9 +19,9 @@
  *   guide).
  * - Prompt caching is automatic for prompts >=1024 tokens and needs no
  *   explicit breakpoints, so this mapper only forwards `GenerateRequest.
- *   promptCacheKey` as `prompt_cache_key` (a stable per-thread routing hint
+ *   promptCacheKey` as `prompt_cache_key` (a stable per-conversation routing hint
  *   that improves cache-affinity — OpenAI's own docs recommend one per
- *   thread/session). A long retention request adds
+ *   conversation). A long retention request adds
  *   `prompt_cache_options: { ttl: "12h" }`; the short one relies on the 30m
  *   default.
  */
@@ -326,7 +326,7 @@ export function toOpenAIResponsesParams(
     ...(mapTools(request.tools) ? { tools: mapTools(request.tools) } : {}),
     reasoning: mapReasoning(call.reasoning),
     ...(request.promptCacheKey ? { prompt_cache_key: request.promptCacheKey } : {}),
-    // The 30m default needs no parameter. The SDK (6.45.0) predates `prompt_cache_options`.
+    // The 30m default needs no parameter.
     ...(cacheTtl ? { prompt_cache_options: { ttl: cacheTtl } } : {}),
   } as OpenAI.Responses.ResponseCreateParamsStreaming;
 }

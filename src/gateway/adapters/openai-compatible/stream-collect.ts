@@ -12,7 +12,7 @@
  * ChatCompletionChunk.Choice.Delta.ToolCall SDK shape) so interleaved argument
  * fragments rebuild the correct ToolCall entries.
  *
- * Provider-protocol grounding (verified against OpenAI SDK 4.104.0):
+ * Provider-protocol facts this file relies on (checked against the `openai` SDK types and docs):
  * - Chat Completions `finish_reason` on streaming chunks is `'stop' | 'length'
  *   | 'tool_calls' | 'content_filter' | 'function_call' | null` (SDK-confirmed).
  *   `null` means the stream is still in progress; only the final content chunk
@@ -178,7 +178,7 @@ export function* eventsFromOpenAIChunk(
     // OpenAI-compatible providers deliver cumulative usage on the final chunk
     // (or a trailing usage-only chunk) when stream_options.include_usage is
     // set. Map prompt/completion tokens and optional reasoning tokens into
-    // Meridian Usage. The SDK docs warn: interrupted streams may never deliver
+    // canonical Usage. The SDK docs warn: interrupted streams may never deliver
     // this chunk.
     const reasoningTokens = chunk.usage.completion_tokens_details?.reasoning_tokens;
     const cacheReadTokens = chunk.usage.prompt_tokens_details?.cached_tokens;

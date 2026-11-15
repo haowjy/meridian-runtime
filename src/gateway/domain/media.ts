@@ -1,6 +1,7 @@
 /**
- * What a model can take as media and how each wire format carries it. Provider facts are in
- * `findings/provider-media-support.md` of the gateway-and-media work item.
+ * What a model can take as media and how each wire format carries it. The provider facts behind it
+ * are collected at
+ * https://github.com/haowjy/meridian-flow-docs/blob/main/kb/wiki/agents/files-the-model-sees.md
  *
  * Two levels, because they change independently: the model says which kinds it takes
  * (`inputModalities`, copied from models.dev) and how large a file its provider fetches by link

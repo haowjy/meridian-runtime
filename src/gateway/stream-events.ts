@@ -13,7 +13,7 @@
  */
 import type { StreamEvent } from "./domain/index.js";
 
-/** Content deltas the writer can receive. */
+/** Content deltas a consumer can show to the end user. */
 export function isFirstTokenEvent(event: StreamEvent): boolean {
   switch (event.type) {
     case "text.delta":

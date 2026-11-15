@@ -43,7 +43,7 @@ jobs:
     outputs:
       unpublished: ${{ steps.resolve.outputs.unpublished }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
@@ -79,11 +79,12 @@ jobs:
       matrix:
         release: ${{ fromJson(needs.tag.outputs.unpublished) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ matrix.release.tag }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.17.0
           cache: pnpm
@@ -92,7 +93,7 @@ jobs:
         run: |
           pnpm lint && pnpm typecheck && pnpm test
           node tools/check-package.mjs --keep "$RUNNER_TEMP/pack"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tarball-${{ matrix.release.tag }}
           path: ${{ runner.temp }}/pack/*.tgz
@@ -110,10 +111,11 @@ jobs:
       matrix:
         release: ${{ fromJson(needs.tag.outputs.unpublished) }}
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.17.0
           registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
 
       - name: Ensure npm supports trusted publishing
         run: |
@@ -124,7 +126,7 @@ jobs:
           npm install -g npm@11.18.0
           test -f "$(npm root -g)/npm/node_modules/sigstore/package.json"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: tarball-${{ matrix.release.tag }}
           path: ${{ runner.temp }}/pack
@@ -140,7 +142,7 @@ jobs:
           if on_npm; then echo "$NAME@$VERSION is already on npm"; exit 0; fi
           npm publish "$RUNNER_TEMP/pack/$(sed 's/^@//; s#/#-#' <<<"$NAME")-$VERSION.tgz" --provenance --access public --tag "$DIST_TAG" || on_npm
 
-  # A GitHub Release for every tag on npm that has none, including the hand-published first version.
+  # A GitHub Release for every tag on npm that has none, including one published by hand.
   # A tag that never reached npm (a failed verify) gets none.
   github-releases:
     needs: [tag, publish]
@@ -149,7 +151,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0

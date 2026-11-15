@@ -6,7 +6,7 @@
  * to canonical StreamEvents.
  *
  * Why one port: every provider has a different SDK contract, but the
- * Meridian-gateway edge is uniform. Adding a new provider means implementing
+ * gateway's edge is uniform. Adding a new provider means implementing
  * this one interface and registering it in createAdapter.
  */
 import type { GenerateRequest, ModelInfo, ResolvedCall, StreamEvent } from "../domain/index.js";
