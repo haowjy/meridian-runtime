@@ -64,7 +64,7 @@ stable release. Two PRs merged close together share one release.
 2. `verify` checks the repo, then packs and checks the tarball (`tools/check-package.mjs`).
 3. `publish` publishes that tarball with provenance (trusted publishing, no token). It checks out
    nothing and installs only the pinned npm.
-4. `github-releases` creates a GitHub Release for every tag whose version is on npm and has none.
+4. `github-releases` creates a GitHub Release for every tag that has none and is on npm, or that `publish` just published in this run (the registry can lag a publish by minutes).
 
 Every step is decided from state, so a cancelled, late, failed or overlapping run loses nothing:
 the next run releases what is still unreleased, publishes the latest tag if it is not on npm, and
