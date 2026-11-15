@@ -1,23 +1,16 @@
 #!/usr/bin/env node
-// Proves each published package's tarball works for a consumer outside this workspace: packs it
-// (as `npm publish` would ship it), installs it with plain npm into an empty project, imports
-// every entry under Node, and typechecks the .d.ts files strictly, once with @types/node and once
-// without it for the entries listed in `meridianRuntime.nodeFreeEntries`. An import that only
-// resolves inside the workspace, or a Node type leaking into a browser entry, fails here.
+// Proves the published tarball works for a consumer outside this repo: packs it (as `npm publish`
+// would ship it), installs it with plain npm into an empty project, imports every entry under
+// Node, and typechecks the .d.ts files strictly, once with @types/node and once without it for the
+// entries listed in `meridianRuntime.nodeFreeEntries`. An import that only resolves inside the
+// repo, or a Node type leaking into a browser entry, fails here.
 //
-// Usage: node tools/check-package.mjs [package-dir ...] [--keep <dir>]
-//   With no package dir, checks every non-private package under packages/.
-//   --keep leaves the tarballs in <dir> (the publish workflow uploads them).
+// The README's first `ts` block is typechecked there too, so the npm page's example compiles.
+//
+// Usage: node tools/check-package.mjs [--keep <dir>]
+//   --keep leaves the tarball in <dir> (the publish workflow uploads it).
 import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -29,21 +22,11 @@ const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const args = process.argv.slice(2);
 const keepAt = args.indexOf("--keep");
 const keepDir = keepAt >= 0 ? resolve(args[keepAt + 1]) : undefined;
-const named = args.filter((_, i) => keepAt < 0 || (i !== keepAt && i !== keepAt + 1));
-const packageDirs = (
-  named.length > 0
-    ? named.map((dir) => resolve(dir))
-    : readdirSync(join(repo, "packages")).map((dir) => join(repo, "packages", dir))
-).filter(
-  (dir) => existsSync(join(dir, "package.json")) && !readJson(join(dir, "package.json")).private,
-);
 
-const catalog = readFileSync(join(repo, "pnpm-workspace.yaml"), "utf8");
-const typesNode = catalog.match(/^\s*["']?@types\/node["']?:\s*(\S+)/m)?.[1];
-if (!typesNode) throw new Error("@types/node not found in the pnpm-workspace.yaml catalog");
+const pkg = readJson(join(repo, "package.json"));
+const typesNode = pkg.devDependencies["@types/node"];
 
-function check(pkgDir) {
-  const pkg = readJson(join(pkgDir, "package.json"));
+function check() {
   const work = mkdtempSync(join(tmpdir(), "package-consumer-"));
   try {
     const packDir = keepDir ?? join(work, "pack");
@@ -51,8 +34,8 @@ function check(pkgDir) {
     mkdirSync(packDir, { recursive: true });
     mkdirSync(project);
 
-    // pnpm pack runs prepack (build) and writes concrete ranges for catalog: and workspace:.
-    run("pnpm", ["pack", "--pack-destination", packDir], pkgDir);
+    // pnpm pack runs prepack (build).
+    run("pnpm", ["pack", "--pack-destination", packDir], repo);
     const prefix = `${pkg.name.replace("@", "").replace("/", "-")}-${pkg.version}.tgz`;
     const tarball = join(packDir, prefix);
     const packed = JSON.parse(
@@ -89,13 +72,8 @@ function check(pkgDir) {
       project,
     );
 
-    const typecheck = (name, specifiers, types) => {
-      if (specifiers.length === 0) return;
-      const imports = specifiers.map((s, i) => `import * as m${i} from "${s}";`);
-      writeFileSync(
-        join(project, `${name}.ts`),
-        `${imports.join("\n")}\nexport const entries = [${specifiers.map((_, i) => `m${i}`).join(", ")}];\n`,
-      );
+    const typecheck = (name, source, types) => {
+      writeFileSync(join(project, `${name}.ts`), source);
       writeFileSync(
         join(project, `tsconfig.${name}.json`),
         JSON.stringify({
@@ -113,8 +91,15 @@ function check(pkgDir) {
       );
       run(process.execPath, [tsc, "-p", `tsconfig.${name}.json`], project);
     };
-    typecheck("all", entries, ["node"]);
-    typecheck("node-free", nodeFree, []);
+    const importAll = (specifiers) =>
+      `${specifiers.map((s, i) => `import * as m${i} from "${s}";`).join("\n")}\nexport const entries = [${specifiers.map((_, i) => `m${i}`).join(", ")}];\n`;
+    typecheck("all", importAll(entries), ["node"]);
+    if (nodeFree.length > 0) typecheck("node-free", importAll(nodeFree), []);
+    const example = readFileSync(join(repo, "README.md"), "utf8").match(
+      /```ts\n([\s\S]*?)```/,
+    )?.[1];
+    if (!example) throw new Error("README.md has no ts example");
+    typecheck("readme-example", example, ["node"]);
 
     for (const entry of entries) {
       run(
@@ -132,7 +117,7 @@ function check(pkgDir) {
 }
 
 try {
-  for (const dir of packageDirs) check(dir);
+  check();
 } catch (error) {
   console.error(`package check failed: ${error.message}`);
   process.exitCode = 1;

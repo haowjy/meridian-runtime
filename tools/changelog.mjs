@@ -1,5 +1,5 @@
 // A PR body's `## Changelog` section: validate it, merge several into one release entry, render
-// that entry into a package's CHANGELOG.md, and read an entry back out for the GitHub Release.
+// that entry into CHANGELOG.md, and read an entry back out for the GitHub Release.
 // A section is either one line `None. <reason>` or `### <Section>` blocks of `- ` bullets.
 
 export const SECTIONS = [

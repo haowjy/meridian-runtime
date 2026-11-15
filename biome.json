@@ -22,7 +22,7 @@
       "linter": { "rules": { "style": { "noProcessEnv": "off" } } }
     },
     {
-      "includes": ["packages/gateway/src/shapes/**"],
+      "includes": ["src/gateway/shapes/**"],
       "linter": {
         "rules": {
           "style": {

@@ -1,6 +1,6 @@
 /**
  * The dev mock provider: an in-process OpenAI-compatible HTTP server with scripted
- * and sample replies. Its own entry (`@meridian-flow/gateway/mock`) because it needs
+ * and sample replies. Its own entry (`@meridian-flow/runtime/gateway/mock`) because it needs
  * `node:http`, which the main entry stays free of.
  */
 import type { ProviderConfig, ProviderModel } from "./domain/index.js";

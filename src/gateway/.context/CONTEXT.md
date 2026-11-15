@@ -6,13 +6,12 @@ normalization, cancellation settlement, and provider-error mapping.
 
 ## Package boundary
 
-`@meridian-flow/gateway` imports no workspace package, and reads
-no environment variable itself: keys arrive in `ProviderConfig`, and every SDK client option
+The gateway reads no environment variable itself: keys arrive in `ProviderConfig`, and every SDK client option
 that would default from the environment is passed explicitly. The one exception is the SDKs'
-own `ANTHROPIC_CUSTOM_HEADERS` and `OPENAI_CUSTOM_HEADERS`, which no client option turns off. Entries: `.` (the port, adapters,
-domain types), `./shapes` (usage, provider error, JSON value: no Node built-ins and no SDKs, so
-a host can re-export them into a browser bundle), `./mock-script` (the mock's zod
-script schemas, the one definition a host can re-export) and `./mock` (the mock server,
+own `ANTHROPIC_CUSTOM_HEADERS` and `OPENAI_CUSTOM_HEADERS`, which no client option turns off. Entries (under `@meridian-flow/runtime`): `./gateway` (the port, adapters,
+domain types), `./gateway/shapes` (usage, provider error, JSON value: no Node built-ins and no SDKs, so
+a host can re-export them into a browser bundle), `./gateway/mock-script` (the mock's zod
+script schemas, the one definition a host can re-export) and `./gateway/mock` (the mock server,
 which needs `node:http`).
 
 What a host offers, charges and reads from its environment stays in the host: its model list with
