@@ -1,12 +1,11 @@
 /**
- * Meridian-canonical gateway types (v1 public API): the provider-neutral request,
+ * The gateway's canonical types (the public API): the provider-neutral request,
  * result, stream-event, message, tool, and capability shapes. The vocabulary
  * every adapter maps its provider SDK to and from; depends on nothing provider-specific.
  *
- * Why this boundary exists (see repo AGENTS.md): provider-specific types must
- * stay inside adapter directories so the orchestrator, loop, and tool executors
- * never import `openai` or `@anthropic-ai/sdk`. Every adapter translates to/from
- * these types at the adapter boundary.
+ * Why this boundary exists (see the gateway's AGENTS.md): provider-specific types stay inside
+ * adapter directories so a host never imports `openai` or `@anthropic-ai/sdk` to use the gateway.
+ * Every adapter translates to and from these types at the adapter boundary.
  *
  * Key design invariants:
  * - JSON-natural: every field must survive `JSON.parse(JSON.stringify(x))`.
@@ -17,7 +16,7 @@
  *   `tool_calls[].index`), used by adapters to reconstruct source order.
  * - `GenerateRequest.promptCacheKey` is canonical prompt-cache *intent*, not
  *   provider syntax, so it stays top-level (never nested in `providerOptions`):
- *   the loop knows the thread's stable key but has no opinion on TTL or wire
+ *   the caller knows a conversation's stable key but has no opinion on TTL or wire
  *   shape. Each adapter decides whether to forward it (a `prompt_cache_key`
  *   routing hint, or nothing). Cache breakpoints are not part of the request:
  *   the Anthropic adapter places them on the wire blocks itself.
@@ -32,22 +31,23 @@ export type TokenizerFamily = "anthropic" | "o200k" | "gemini" | "deepseek";
 /** What a model reads as input, in the models.dev vocabulary. */
 export type InputModality = "text" | "image" | "pdf" | "audio" | "video";
 
-/** Provider cache lifetimes are recorded as the provider states them, in seconds. Anything that must beat a lifetime computes its buffer from these values. */
+/** Common provider cache lifetimes in seconds (Anthropic's 5 minutes and 1 hour), for a host to put in a `PromptCacheDescriptor` or to compute a buffer from. */
 export const DEFAULT_SUBAGENT_PROMPT_CACHE_TTL = 5 * 60;
 export const DEFAULT_PRIMARY_PROMPT_CACHE_TTL = 60 * 60;
 
-/** Registry-declared provider cache behavior and its best-known retention window. */
+/** A model's provider cache behavior and its best-known retention window. */
 export interface PromptCacheDescriptor {
   kind: "explicit" | "automatic";
-  /** Lifetime in seconds of a short-retention request (subagents); null means the provider documents none. */
+  /** Lifetime in seconds of a short-retention request; null means the provider documents none. */
   shortTtlSeconds: number | null;
-  /** Lifetime of a long-retention request (primary chats); equals `shortTtlSeconds` when the provider offers one lifetime. */
+  /** Lifetime of a long-retention request; equals `shortTtlSeconds` when the provider offers one lifetime. */
   longTtlSeconds: number | null;
 }
 
 /**
- * Which cache lifetime a request wants: primary chats ask for long, subagents for short,
- * and a one-shot call nothing reads again (a rolling summary) for none: no cache mark is sent.
+ * Which cache lifetime a request wants: `long` for a conversation the caller keeps extending,
+ * `short` for a call re-read only within minutes, and `none` for a one-shot call nothing reads
+ * again (a summary): no cache mark is sent.
  */
 export type PromptCacheRetention = "none" | "short" | "long";
 
@@ -65,7 +65,7 @@ export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 /**
  * A model's reasoning controls, copied from its models.dev `reasoning_options`
- * (`xhigh`, which Flow never requests, is omitted from `efforts`).
+ * (`xhigh` is not in `REASONING_EFFORTS`, so it is omitted from `efforts`).
  */
 export interface ReasoningSupport {
   /** Effort levels the model accepts. */
@@ -190,9 +190,8 @@ export interface Message {
 }
 
 /**
- * A tool Flow executes, with a JSON Schema input signature. The orchestrator
- * sends these to the provider as part of the tool definitions, and the
- * adapter translates them into the provider's tool schema format.
+ * A tool the caller executes, with a JSON Schema input signature. The request carries these as
+ * the tool definitions, and the adapter translates them into the provider's tool schema format.
  */
 export interface Tool {
   type: "function";
@@ -219,14 +218,14 @@ export interface GenerateRequest {
   reasoning?: "disabled" | "adaptive" | { effort: ReasoningEffort };
   signal?: AbortSignal;
   /**
-   * Stable per-thread cache-routing key (opaque, not a secret): unlike
+   * Stable cache-routing key for one conversation (opaque, not a secret): unlike
    * `correlation` below, adapters MAY map this into the provider request —
    * e.g. OpenAI Responses `prompt_cache_key`, which improves cache-affinity
    * routing for automatic caching. Anthropic has no equivalent concept and
    * ignores it.
    */
   promptCacheKey?: string;
-  /** Cache lifetime wanted; fixed per thread kind (`none` for one-shot calls nothing re-reads) so the cached prefix never changes mid-thread. */
+  /** Cache lifetime wanted; keep it the same for every call of one conversation (`none` for one-shot calls nothing re-reads) so the cached prefix never changes. */
   promptCacheRetention: PromptCacheRetention;
   /**
    * Credentials for this call, keyed by provider id. The routed provider's entry replaces that
@@ -265,7 +264,7 @@ export type ErrorCode =
 
 /**
  * Stream event — the canonical event set that every adapter emits and the
- * orchestrator consumes. Each event is a complete, Meridian-typed value; the
+ * caller consumes. Each event is a complete value of the gateway's own types; the
  * generator produces them one-at-a-time so subscribers receive them as they
  * arrive from the provider without waiting for the full response.
  *
@@ -334,7 +333,7 @@ export interface ToolCall {
  * - Anthropic StopReason → FinishReason: `end_turn`→`end_turn`, `tool_use`→`tool_use`,
  *   `max_tokens`→`max_tokens`, `stop_sequence`→`stop_sequence`, `refusal`→`error`.
  *   NOTE: Anthropic docs additionally list `model_context_window_exceeded` but the
- *   installed SDK 0.100.1 union does not include it; if that value arrives at runtime
+ *   `StopReason` union in `@anthropic-ai/sdk` 0.106 does not include it; if that value arrives at runtime
  *   the adapter maps the wire string to the canonical `context_overflow` error.
  * - OpenAI Responses status: `completed`→`end_turn`, `failed`/`cancelled`→`error`,
  *   `incomplete` maps to `max_tokens` or `error` depending on `incomplete_details.reason`.
@@ -342,8 +341,8 @@ export interface ToolCall {
  *   `length`→`max_tokens`, `content_filter`→`error`.
  *
  * Precedence: `tool_use` wins over any terminal status when tool calls were
- * actually assembled (the orchestrator must execute tools before considering
- * the turn finished).
+ * actually assembled (the caller must execute the tools before treating the
+ * response as finished).
  */
 export type FinishReason = "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "error";
 
@@ -355,8 +354,7 @@ export type FinishReason = "end_turn" | "tool_use" | "max_tokens" | "stop_sequen
  * OpenAI Responses output_index), not grouped by part type. This preserves the
  * model's intended content sequence: reasoning → text → tool_use interleaving.
  *
- * `toolCalls` is a flat list of every parsed ToolCall in the response; the
- * orchestrator uses this to dispatch tool execution.
+ * `toolCalls` is a flat list of every parsed ToolCall in the response, for the caller to run.
  */
 export interface GenerateResult {
   content: ContentPart[];
@@ -456,7 +454,7 @@ export interface GatewayConfig {
   /** Absolute ceiling for one provider attempt. 0 disables. Retry/backoff is outside this window. */
   attemptCeilingMs?: number;
   retry?: { maxAttempts: number; initialDelayMs: number; maxDelayMs: number };
-  /** Registry build warnings (e.g. duplicate model IDs skipped). */
+  /** Warnings while the gateway is built (e.g. duplicate model IDs skipped). */
   onWarning?: (span: TraceSpan) => void;
 }
 

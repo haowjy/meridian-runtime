@@ -1,6 +1,7 @@
 /**
- * Purpose: Wire contract for scripting the dev-only mock model: queued replies that answer the next model calls.
- * Why independent: the dev CLI writes scripts and the server's mock gateway consumes them; both validate the same schema.
+ * Wire contract for scripting the mock model: queued replies that answer the next model calls.
+ * It is its own entry so a host's tooling that writes scripts and the mock server that reads them
+ * validate against the same schema without importing the server.
  */
 import { z } from "zod";
 
@@ -121,7 +122,7 @@ export type MockModelStep = z.infer<typeof mockModelStepSchema>;
 export const mockModelScriptSchema = z.strictObject({
   /**
    * Only model calls whose latest user message contains this text consume the
-   * script, so concurrent threads do not steal each other's steps. Omitted: any call.
+   * script, so concurrent conversations do not steal each other's steps. Omitted: any call.
    */
   match: z.string().min(1).optional(),
   steps: z.array(mockModelStepSchema).min(1).max(100),

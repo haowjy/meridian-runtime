@@ -1,8 +1,7 @@
 /**
- * Purpose: Defines the JSON-natural token usage contract shared by the model
- * gateway, runtime metering, and billing price conversion.
- * Key decision: provider adapters normalize their native token accounting into
- * this plain DTO before any runtime or billing logic consumes it.
+ * The JSON-natural token usage contract the gateway returns, which a host can meter and price.
+ * Provider adapters normalize their native token accounting into this plain DTO, so a host
+ * never reads a provider's own counters.
  */
 
 /**

@@ -4,8 +4,7 @@
  * domain message types.
  *
  * These are simple constructors that produce well-formed Message/ContentPart
- * values without boilerplate. Used by context-builder.ts in the loop and by
- * tests.
+ * values without boilerplate. Hosts and tests use them to build requests.
  */
 
 import type {

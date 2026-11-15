@@ -59,8 +59,8 @@ are plain extra headers, not a credential.
 
 ## Port and attempt policy
 
-`Gateway.stream()` yields canonical `StreamEvent`s and `listModels()` completes the port;
-the orchestrator persists every cancelled call's result. A stop ends the stream with exactly one
+`Gateway.stream()` yields canonical `StreamEvent`s and `listModels()` completes the port.
+A stop ends the stream with exactly one
 `end`, built in the shared envelope (`adapters/provider-stream.ts`) from what the adapter had
 accumulated: the envelope races the SDK against the abort, so a rejecting, returning or hung SDK
 all end at once, with the text and usage so far. `attempt-stream.ts` stamps that `end` (and any
@@ -92,8 +92,8 @@ cannot hold cancellation hostage.
 ## Canonicalization and errors
 
 Adapters normalize provider usage into the shared `Usage` contract and validate
-it before returning. Provider counters differ, so adapters—not billing or the
-loop—own cache-counter conversion. Cancelled-call settlement is generic and
+it before returning. Provider counters differ, so adapters, not a host's billing
+code, own cache-counter conversion. Cancelled-call settlement is generic and
 owned by the gateway.
 
 A close is `ok`, `error`, or `cancelled`. `cancelled` requires causal abort
@@ -105,8 +105,7 @@ One HTTP error policy handles all adapters: network/408/429/5xx retry; 401/403
 map to `auth_error`; 400 matches shared `invalid_request`, `context_overflow`,
 or `content_filtered` patterns; other 4xx are non-retryable provider errors.
 `x-should-retry: false` wins. Context-window refusals normalize to
-`context_overflow` with metered partial usage so the runtime can perform one
-cold compaction retry.
+`context_overflow` with metered partial usage so the caller can trim the history and retry once.
 
 Provider terminal failure/truncation takes precedence over accumulated tool calls:
 OpenAI incomplete/failed responses and compatible length/content-filter finishes
@@ -121,12 +120,12 @@ or hanging transport probes stay separate.
 The compatible accumulator persists visible `reasoning_content` as a canonical
 reasoning part before text and tools. This carries no provider signature or
 replay metadata. Like text, it is included in the adapter's partial result on cancellation;
-the runtime still discards the in-flight response on Stop. This does not change
+whether to keep it is the caller's choice. This does not change
 the gateway's reasoning-only retry rule. The Chat Completions protocol does not
 supply arbitrary block positions.
 
-The mock reports request-derived synthetic input usage so long histories reach
-real compaction boundaries. These counters test control flow, not provider
+The mock reports request-derived synthetic input usage so a host can test its history
+trimming against long histories. These counters test control flow, not provider
 pricing or cache performance.
 
 Malformed tool-argument JSON is repaired at the gateway helper or surfaced as a
@@ -141,8 +140,8 @@ parts. `source` is `{ url }` (https only; a data URL is refused), `{ data }` (ba
 `{ reference: { provider, id } }` (a provider's own file id, for the provider that issued it; no
 mapper sends one yet and one reaching a mapper is an error). `mediaType` is required and never
 guessed from a URL. A mapper never downloads a link: a source its wire can't take is an error,
-and the caller decides between link and bytes before building the request, because file bytes
-should not pass through the server on every model request.
+and the caller decides between link and bytes before building the request: only the caller knows
+where a file lives and how often the same file is sent.
 
 Two levels, in `domain/media.ts`. The model says what it takes: `ModelInfo.inputModalities`
 (models.dev's `modalities.input`) and `maxLinkBytes`, the largest file its provider fetches by
@@ -178,7 +177,7 @@ Provider facts and the reasons behind this are in
 every environment option (the key, Vertex mode, project, location, base URL, API version)
 only when it is unset, so the adapter passes each, and it retries nothing unless `retryOptions`
 is set, which it never is. If the machine sets both of the SDK's own Google key variables it
-prints a console warning (once per client), and the explicit key still wins. Facts a cold reader would miss:
+prints a console warning (once per client), and the explicit key still wins.
 
 - A tool result is a `functionResponse` named for its call, found from the earlier `tool_use`;
   results of parallel calls share one user turn (adjacent same-role messages merge).
@@ -186,7 +185,7 @@ prints a console warning (once per client), and the explicit key still wins. Fac
   model}` on the text, reasoning or `tool_use` part they came on, and go back only to that
   provider/model. A replayed first function call of a Gemini 3+ model without one gets
   `skip_thought_signature_validator`, Google's documented bypass, because Gemini 3 refuses the
-  step otherwise (history from another model, a compacted turn).
+  step otherwise (history from another model, or one with its thinking removed).
 - `Usage` folds thought tokens into `outputTokens` and tool-use prompt tokens into `inputTokens`.
   A file fetched by link is counted in `totalTokenCount` only (`promptTokenCount` is absent), so
   the input is read from the total.
@@ -202,7 +201,7 @@ prints a console warning (once per client), and the explicit key still wins. Fac
 A model entry carries its offering's `promptCache: { kind, shortTtlSeconds, longTtlSeconds }`; `null`
 means the provider documents no lifetime, which is unknown, not infinite (a host's cache prediction
 should read it as cold). `DEFAULT_SUBAGENT_PROMPT_CACHE_TTL` (5m) and `DEFAULT_PRIMARY_PROMPT_CACHE_TTL`
-(1h) are exported for a host that must beat a lifetime with a buffer. Each adapter keeps one table of the
+(1h) are exported as Anthropic's two lifetimes, for a host that must beat a lifetime with a buffer. Each adapter keeps one table of the
 lifetimes its wire can express, used for both the creation-time check (`assertModelsOnWire`) and the
 request mapping (OpenAI: 30m and 12h; Anthropic: 5m and 1h, explicit models only; Gemini: none, its
 implicit cache documents no lifetime and takes no mark).

@@ -37,8 +37,7 @@
  *   landing beside a tool result. Marks go on wire user messages, whose last block
  *   always accepts `cache_control`. Marks move as the tail
  *   advances; providers hash content, not the marker, so that never invalidates
- *   a cached prefix. A 1h write costs 2x input tokens (5m: 1.25x) — see the
- *   registry's `cacheWriteUsdPerMillionTokens` pinned rates.
+ *   a cached prefix. A 1h write costs 2x input tokens (5m: 1.25x).
  */
 import type Anthropic from "@anthropic-ai/sdk";
 import type {

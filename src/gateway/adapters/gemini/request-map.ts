@@ -13,7 +13,7 @@
  * - Thought signatures: the model's `thoughtSignature` on a text, thought or function-call part
  *   is kept in `providerOptions.gemini.signature` and sent back on the same part, only to the
  *   provider/model pair that issued it. Gemini 3 rejects a replayed function-call step whose
- *   first call carries no signature (history from another model, a compacted turn), so that
+ *   first call carries no signature (history from another model, or one with its thinking removed), so that
  *   call gets Google's documented validator-bypass value.
  * - Prompt caching is implicit: no mark and no TTL is sent.
  */

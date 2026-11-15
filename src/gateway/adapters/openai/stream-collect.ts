@@ -3,7 +3,7 @@
  * canonical StreamEvents and a final GenerateResult. The Responses protocol
  * names the same logical output item by different keys in different event
  * families, so this file owns the reconciliation from provider item IDs,
- * call IDs, and output positions into Meridian's canonical ContentPart,
+ * call IDs, and output positions into the canonical ContentPart,
  * ToolCall, Usage, and FinishReason vocabulary.
  *
  * Key decision: provider `output_index` is treated as the source-order spine.
@@ -11,18 +11,17 @@
  * position and sorted only when building the final result, so persisted content
  * follows the provider's streamed order instead of being grouped by part type.
  *
- * Provider-protocol grounding (verified against OpenAI SDK 4.104.0 + docs):
+ * Provider-protocol facts this file relies on (checked against the `openai` SDK types and docs):
  * - `output_index` is the position of the output item in `response.output[]`.
  *   The final array order is model-dependent and the docs do NOT explicitly
- *   guarantee non-interleaving during streaming, so Meridian buffers by index
+ *   guarantee non-interleaving during streaming, so this file buffers by index
  *   and sorts at assembly time rather than trusting arrival order.
  * - `response.function_call_arguments.delta` events carry `item_id` and
  *   `output_index` but not `call_id`. This is why
  *   argument deltas are buffered in `pendingDeltas` until the durable `call_id`
  *   arrives via `response.output_item.added` or a later event.
- * - SDK v6 renamed the streaming event literals from `response.reasoning.*`
- *   to `response.reasoning_text.*`; keep the accumulator keyed by output item
- *   identity so the external Meridian contract does not change.
+ * - Reasoning text events are named `response.reasoning_text.*`; the accumulator is keyed by
+ *   output item identity, not by event name.
  */
 
 import type OpenAI from "openai";
@@ -56,7 +55,7 @@ interface StreamAccumulator {
   reasoningItemsByOutputIndex: Map<number, ReasoningItemEntry>;
   // Function-call events are even more fragmented: argument deltas can arrive
   // with only `item_id`/`output_index`, while later item events reveal `call_id`
-  // (the ID Meridian must expose to tools). These three lookups reconcile all
+  // (the ID the gateway exposes to the caller for tool results). These three lookups reconcile all
   // provider references to one mutable ToolCallEntry.
   //
   // Rationale for the three-map design: the Responses protocol refers to the
@@ -84,7 +83,7 @@ interface ReasoningItemEntry {
   // Stable provider position for ordering and for deltas that lack a known ID.
   outputIndex: number;
   text: string;
-  // OpenAI can return encrypted reasoning content; Meridian preserves it in
+  // OpenAI can return encrypted reasoning content; the gateway preserves it in
   // providerOptions so future requests can replay the reasoning item statelessly.
   encrypted?: string;
 }
@@ -184,7 +183,7 @@ function findToolCallEntry(
   acc: StreamAccumulator,
   params: { callId?: string; itemId?: string; outputIndex: number },
 ): ToolCallEntry | undefined {
-  // Lookup order follows semantic strength: callId is Meridian's durable tool
+  // Lookup order follows semantic strength: callId is the gateway's durable tool
   // identity, itemId is the provider output identity, and output_index is the
   // ordering fallback used by deltas before either ID has appeared.
   return (
@@ -201,13 +200,13 @@ export function mapUsage(usage: OpenAI.Responses.ResponseUsage, longCacheWrites:
   // hits and reasoning tokens live in provider-specific detail objects
   // (`input_tokens_details.cached_tokens`, `output_tokens_details.reasoning_tokens`).
   // Both fields are confirmed in the OpenAI reasoning guide and the installed
-  // SDK's ResponseUsage shape. Meridian only sets optional Usage fields when the
+  // SDK's ResponseUsage shape. Optional Usage fields are set only when the
   // provider reports a positive value.
   //
   // GPT-5.6+ also bills cache writes: `cache_write_tokens` is their total, split by
   // lifetime in `cache_write_tokens_details` (`ttl_30m_tokens` + `ttl_12h_tokens`), and
-  // `cached_tokens` excludes them. The installed SDK (6.45.0) predates these fields, so
-  // they are read through a local shape.
+  // `cached_tokens` excludes them. The installed SDK types `cache_write_tokens` but not
+  // the `cache_write_tokens_details` split, so that is read through a local shape.
   const details = usage.input_tokens_details as
     | (OpenAI.Responses.ResponseUsage["input_tokens_details"] & {
         cache_write_tokens?: number;
@@ -543,7 +542,7 @@ export function* eventsFromResponseStreamEvent(
 
     default:
       // Other hosted-tool/provider events (web_search, code_interpreter, etc.)
-      // have no Meridian-canonical ContentPart/StreamEvent mapping yet. Ignore
+      // have no canonical ContentPart/StreamEvent mapping yet. Ignore
       // rather than inventing a lossy custom contract at this boundary.
       break;
   }

@@ -1,7 +1,6 @@
 /**
- * The provider's own status and message, kept as owner-scoped debug evidence for
- * `./mf thread view`. Never enters event payloads or model context, and the app
- * never shows the message.
+ * The provider's own status and message, kept as debug evidence for the host's operators. Never
+ * put it in event payloads or model context, and never show the message to an end user.
  */
 export type ProviderErrorResponse = {
   /** HTTP status; null when the provider reported the failure inside the stream. */

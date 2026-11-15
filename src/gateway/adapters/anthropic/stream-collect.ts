@@ -11,7 +11,7 @@
  * when building the final result, so persisted content follows the order Claude
  * streamed instead of grouping all reasoning, then all text, then all tools.
  *
- * Provider-protocol grounding (verified against Anthropic SDK 0.100.1 + docs):
+ * Provider-protocol facts this file relies on (checked against the `@anthropic-ai/sdk` types and docs):
  * - Anthropic's documented stream flow is strictly serial per block:
  *   `message_start` → (content_block_start → delta(s) → content_block_stop)*
  *   → `message_delta` → `message_stop`. Each block's `index` corresponds to
@@ -24,7 +24,7 @@
  *   `input_json_delta` (partial JSON for tool input — must be concatenated
  *   before parsing).
  * - StopReason mismatch: current Anthropic docs list
- *   `model_context_window_exceeded`, but the installed SDK 0.100.1's
+ *   `model_context_window_exceeded`, but the SDK's
  *   `StopReason` union is `'end_turn' | 'max_tokens' | 'stop_sequence' |
  *   'tool_use' | 'pause_turn' | 'refusal'` — that value is not present.
  */
@@ -53,7 +53,7 @@ interface StreamAccumulator {
   // merged into a single canonical TextPart. Block index = position in final
   // Message.content[].
   textBlocks: Map<number, string>;
-  // Thinking and redacted_thinking blocks are reasoning parts in Meridian. The
+  // Thinking and redacted_thinking blocks are reasoning parts in the canonical types. The
   // block index is enough to reconcile start metadata, streaming deltas, and
   // signature deltas for the same block.
   reasoningBlocks: Map<number, ReasoningBlockEntry>;
@@ -107,15 +107,15 @@ export function createStreamAccumulator(
 // ── Finish reason mapping ─────────────────────────────────────────
 
 /**
- * Map Anthropic stop reasons to Meridian FinishReason.
+ * Map Anthropic stop reasons to the canonical FinishReason.
  *
- * The installed SDK 0.100.1 StopReason union is:
+ * The SDK's StopReason union is:
  *   'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | 'pause_turn' | 'refusal'
  * Current Anthropic docs additionally list `model_context_window_exceeded`,
  * but that value is not in the SDK union; accept the wire string at this boundary.
  */
 export function mapStopReason(reason: string | null | undefined): FinishReason {
-  // Anthropic stop reasons mostly line up with Meridian FinishReason. `refusal`
+  // Anthropic stop reasons mostly line up with the canonical FinishReason. `refusal`
   // and `pause_turn` have no canonical equivalent today, so they are
   // represented as an error finish and end_turn respectively.
   switch (reason) {
@@ -142,7 +142,7 @@ export function mapUsage(
   longCacheWrites: boolean,
   fallback?: Usage,
 ): Usage {
-  // Anthropic's input_tokens excludes cache reads and cache creation. Meridian's
+  // Anthropic's input_tokens excludes cache reads and cache creation. the canonical
   // canonical inputTokens is inclusive, so the adapter owns the additive
   // conversion before usage reaches persistence, displays, or pricing.
   const fallbackCacheRead = fallback?.cacheReadTokens ?? 0;
