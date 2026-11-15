@@ -205,13 +205,9 @@ export function mapUsage(usage: OpenAI.Responses.ResponseUsage, longCacheWrites:
   //
   // GPT-5.6+ also bills cache writes: `cache_write_tokens` is their total, split by
   // lifetime in `cache_write_tokens_details` (`ttl_30m_tokens` + `ttl_12h_tokens`), and
-  // `cached_tokens` excludes them. The installed SDK types `cache_write_tokens` but not
-  // the `cache_write_tokens_details` split, so that is read through a local shape.
+  // `cached_tokens` excludes them. Models before GPT-5.6 omit both at runtime, whatever the SDK's types say.
   const details = usage.input_tokens_details as
-    | (OpenAI.Responses.ResponseUsage["input_tokens_details"] & {
-        cache_write_tokens?: number;
-        cache_write_tokens_details?: { ttl_12h_tokens?: number };
-      })
+    | OpenAI.Responses.ResponseUsage["input_tokens_details"]
     | undefined;
   const result: Usage = {
     inputTokens: usage.input_tokens,

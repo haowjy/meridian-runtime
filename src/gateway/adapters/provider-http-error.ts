@@ -128,8 +128,15 @@ export function providerClientOptions(config: ProviderConfig, defaultBaseUrl: st
   };
 }
 
-/** Anthropic client options that default from the environment, set to "none". */
-export const ANTHROPIC_ENV_OPTOUT = { authToken: null, webhookKey: null };
+/**
+ * Anthropic client options that default from the environment, set to "none".
+ * `openTelemetry: false` stops the `ANTHROPIC_OPEN_TELEMETRY*` variables and the SDK's spans and trace headers.
+ */
+export const ANTHROPIC_ENV_OPTOUT = {
+  authToken: null,
+  webhookKey: null,
+  openTelemetry: false as const,
+};
 
 /** OpenAI client options that default from the environment, set to "none". */
 export const OPENAI_ENV_OPTOUT = {

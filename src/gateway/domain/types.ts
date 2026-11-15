@@ -332,9 +332,7 @@ export interface ToolCall {
  * Provider mapping:
  * - Anthropic StopReason → FinishReason: `end_turn`→`end_turn`, `tool_use`→`tool_use`,
  *   `max_tokens`→`max_tokens`, `stop_sequence`→`stop_sequence`, `refusal`→`error`.
- *   NOTE: Anthropic docs additionally list `model_context_window_exceeded` but the
- *   `StopReason` union in `@anthropic-ai/sdk` 0.106 does not include it; if that value arrives at runtime
- *   the adapter maps the wire string to the canonical `context_overflow` error.
+ *   `model_context_window_exceeded` maps to the canonical `context_overflow` error.
  * - OpenAI Responses status: `completed`→`end_turn`, `failed`/`cancelled`→`error`,
  *   `incomplete` maps to `max_tokens` or `error` depending on `incomplete_details.reason`.
  * - OpenAI-Chat finish_reason: `stop`→`end_turn`, `tool_calls`→`tool_use`,

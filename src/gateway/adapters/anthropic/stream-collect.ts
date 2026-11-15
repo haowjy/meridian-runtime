@@ -23,10 +23,6 @@
  *   not user-visible, arrives just before `content_block_stop`),
  *   `input_json_delta` (partial JSON for tool input — must be concatenated
  *   before parsing).
- * - StopReason mismatch: current Anthropic docs list
- *   `model_context_window_exceeded`, but the SDK's
- *   `StopReason` union is `'end_turn' | 'max_tokens' | 'stop_sequence' |
- *   'tool_use' | 'pause_turn' | 'refusal'` — that value is not present.
  */
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -108,11 +104,6 @@ export function createStreamAccumulator(
 
 /**
  * Map Anthropic stop reasons to the canonical FinishReason.
- *
- * The SDK's StopReason union is:
- *   'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | 'pause_turn' | 'refusal'
- * Current Anthropic docs additionally list `model_context_window_exceeded`,
- * but that value is not in the SDK union; accept the wire string at this boundary.
  */
 export function mapStopReason(reason: string | null | undefined): FinishReason {
   // Anthropic stop reasons mostly line up with the canonical FinishReason. `refusal`
@@ -313,7 +304,7 @@ export function* eventsFromAnthropicStreamEvent(
 
         yield { type: "usage", usage: acc.usage };
       }
-      if ((event.delta.stop_reason as string) === "model_context_window_exceeded") {
+      if (event.delta.stop_reason === "model_context_window_exceeded") {
         yield {
           type: "error",
           code: "context_overflow",

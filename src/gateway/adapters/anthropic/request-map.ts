@@ -343,12 +343,10 @@ function markCachePrefix(
   const marked = [...messages];
   let remaining = 2;
   for (let index = marked.length - 1; index >= 0 && remaining > 0; index--) {
-    if (marked[index].role !== "user") continue;
+    const message = marked[index];
+    if (message.role !== "user") continue;
     remaining--;
-    marked[index] = {
-      ...marked[index],
-      content: markLastBlock(marked[index].content, cacheControl),
-    };
+    marked[index] = { ...message, content: markLastBlock(message.content, cacheControl) };
   }
   return {
     system: system && [{ type: "text", text: system, cache_control: cacheControl }],

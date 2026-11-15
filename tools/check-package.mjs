@@ -15,7 +15,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const repo = resolve(import.meta.dirname, "..");
-const tsc = join(repo, "node_modules/typescript/bin/tsc");
+// Consumers still on TypeScript 6 read the same declarations, so every typecheck runs under the
+// repo's compiler (7) and under 6, installed beside the tarball as `typescript6`.
+const compilers = [
+  join(repo, "node_modules/typescript/bin/tsc"),
+  "node_modules/typescript6/bin/tsc",
+];
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: "inherit" });
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 
@@ -68,6 +73,7 @@ function check() {
         "--no-fund",
         tarball,
         `@types/node@${typesNode}`,
+        "typescript6@npm:typescript@6",
       ],
       project,
     );
@@ -89,7 +95,8 @@ function check() {
           files: [`${name}.ts`],
         }),
       );
-      run(process.execPath, [tsc, "-p", `tsconfig.${name}.json`], project);
+      for (const tsc of compilers)
+        run(process.execPath, [tsc, "-p", `tsconfig.${name}.json`], project);
     };
     const importAll = (specifiers) =>
       `${specifiers.map((s, i) => `import * as m${i} from "${s}";`).join("\n")}\nexport const entries = [${specifiers.map((_, i) => `m${i}`).join(", ")}];\n`;
