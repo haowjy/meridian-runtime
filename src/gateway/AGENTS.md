@@ -7,7 +7,7 @@ The model gateway. Rationale and policy: [`.context/CONTEXT.md`](.context/CONTEX
   environment for any client option left unset (`*_API_KEY`, `*_BASE_URL`, `*_AUTH_TOKEN`, ...), so
   each adapter passes every such option explicitly: `providerClientOptions` sets the shared ones,
   and `ANTHROPIC_ENV_OPTOUT` / `OPENAI_ENV_OPTOUT` (`adapters/provider-http-error.ts`) set the
-  rest to `null`. The Anthropic adapter always passes `authToken: null`; its `apiKey` is the
+  rest to `null` (`false` for Anthropic's `openTelemetry`). The Anthropic adapter always passes `authToken: null`; its `apiKey` is the
   caller's key, or a placeholder when the credential is a token (`adapters/credentials.ts`). A new
   SDK option that defaults from `process.env` needs the same (`*_CUSTOM_HEADERS` has no opt-out).
 - `shapes/` (the `./gateway/shapes` entry) must stay free of Node built-ins and SDKs, and imports

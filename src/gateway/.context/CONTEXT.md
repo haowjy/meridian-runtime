@@ -34,6 +34,7 @@ are plain extra headers, not a credential.
   with a key per tenant holds no memory per key.
 - An empty `apiKey` is no credential, on the request and in `ProviderConfig.auth` alike: the
   request falls back to the provider's own credential, then to the placeholder key.
+- The Anthropic SDK (1.x) sends a key as `Authorization: Bearer`, not `x-api-key`; the API accepts both.
 - Every wire authenticates a token the same way. The SDK gets a placeholder key and a `fetch`
   (`bearerFetch`) that replaces `Authorization` with the token and drops `x-api-key` and
   `x-goog-api-key`. `tokenSource` caches the token until 60 s before `expiresAt`, shares one

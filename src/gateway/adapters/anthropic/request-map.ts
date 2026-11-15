@@ -312,9 +312,7 @@ function mergeConsecutiveSameRole(
 //
 
 function extractSystem(messages: Message[]): string | undefined {
-  const system = textFromParts(
-    messages.filter((m) => m.role === "system").flatMap((m) => m.content),
-  );
+  const system = textFromParts(messages.flatMap((m) => (m.role === "system" ? m.content : [])));
   return system.length > 0 ? system : undefined;
 }
 
@@ -343,12 +341,10 @@ function markCachePrefix(
   const marked = [...messages];
   let remaining = 2;
   for (let index = marked.length - 1; index >= 0 && remaining > 0; index--) {
-    if (marked[index].role !== "user") continue;
+    const message = marked[index];
+    if (message.role !== "user") continue;
     remaining--;
-    marked[index] = {
-      ...marked[index],
-      content: markLastBlock(marked[index].content, cacheControl),
-    };
+    marked[index] = { ...message, content: markLastBlock(message.content, cacheControl) };
   }
   return {
     system: system && [{ type: "text", text: system, cache_control: cacheControl }],

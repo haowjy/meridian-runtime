@@ -97,7 +97,7 @@ what changed for a consumer. Any model may merge a reviewed PR with green CI.
 
 ## Trying a change in Flow before it is published
 
-To run your checkout in Flow's dev stack (pnpm 10.34; use the Flow checkout that is yours):
+To run your checkout in Flow's dev stack (with the pnpm Flow pins in its `packageManager`; use the Flow checkout that is yours):
 
 1. Here, `pnpm install`, then `pnpm dev` (`tsc --watch` into `dist/`, which is all Flow reads).
    Leave it running.
