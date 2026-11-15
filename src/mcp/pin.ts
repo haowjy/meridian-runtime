@@ -15,16 +15,22 @@ const MODEL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const isObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-function toolProblem(tool: JsonObject): string | undefined {
-  if (typeof tool.name !== "string" || tool.name === "") return "it has no name";
+function toolProblem(
+  tool: JsonObject,
+): { kind: "invalid_tool" | "task_required"; text: string } | undefined {
+  const invalid = (text: string) => ({ kind: "invalid_tool" as const, text });
+  if (typeof tool.name !== "string" || tool.name === "") return invalid("it has no name");
   const schema = tool.inputSchema;
   if (!isObject(schema) || schema.type !== "object")
-    return "its inputSchema is not an object schema";
+    return invalid("its inputSchema is not an object schema");
   if (tool.description !== undefined && typeof tool.description !== "string")
-    return "its description is not a string";
+    return invalid("its description is not a string");
   const execution = tool.execution;
   if (isObject(execution) && execution.taskSupport === "required")
-    return "it needs MCP's task protocol, which this client does not speak";
+    return {
+      kind: "task_required",
+      text: "it needs MCP's task protocol, which this client does not speak",
+    };
   return undefined;
 }
 
@@ -57,11 +63,10 @@ export function pin(
     }
     const problem = toolProblem(listed);
     if (problem) {
-      const kind = problem.startsWith("it needs MCP's task") ? "task_required" : "invalid_tool";
       problems.push({
         tool: name,
-        problem: kind,
-        message: `"${name}" cannot be offered: ${problem}`,
+        problem: problem.kind,
+        message: `"${name}" cannot be offered: ${problem.text}`,
       });
       continue;
     }
