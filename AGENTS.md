@@ -44,13 +44,14 @@ the pushed commit: it bumps each such package's `version`, renders the `## Chang
 the PRs merged since its last release into `packages/<dir>/CHANGELOG.md`, commits
 `release: <dir>-v<version>`, tags `<dir>-v<version>` and pushes both. If the push is rejected
 because `main` moved, it starts over from the new `main`. The same run then checks
-the repo, packs and checks the tarball (`tools/check-package.mjs`), publishes it with provenance
-(trusted publishing, no token) and creates the GitHub Release. The job holding the publish token
+the repo, packs and checks the tarball (`tools/check-package.mjs`) and publishes it with provenance
+(trusted publishing, no token). A last job creates a GitHub Release for every tag whose version is on
+npm and has none; a tag that never reached npm gets none. The job holding the publish token
 checks out nothing and installs only the pinned npm. A cancelled, late or failed run loses nothing:
-the next run releases what is still unreleased and publishes any latest tag not on npm. Rerunning
-is safe: with nothing new since the tag nothing is released, and a version already on npm is not
-published again.
-A tag pushed with `GITHUB_TOKEN` starts no workflow, which is why tagging and publishing are one run.
+the next run releases what is still unreleased, publishes any latest tag not on npm and creates any
+missing GitHub Release. Every step is decided from state, so overlapping runs and reruns are safe: a
+version already on npm is not published again (and counts as done), and a Release is made once.
+A tag push starts no workflow, and a tag pushed with `GITHUB_TOKEN` couldn't anyway.
 
 `pr-body.yml` fails a non-draft PR without a valid `## Changelog` section, and any PR that edits a
 `CHANGELOG.md` (the release job owns them). Never bump a `version` by hand.
@@ -61,20 +62,26 @@ Things to know:
 - The release commit goes straight to `main` with `GITHUB_TOKEN`; `main` must allow that.
 - A package with no `<dir>-v<version>` tag is not released (the run warns): first versions are
   tagged by hand.
+- A package that fails (more than 200 commits since its last tag, several PRs for one commit) is
+  reported and the run goes red, but the other packages still release.
+- A squash-merged PR titled `release: ...` is an ordinary change; only the bot's
+  `release: <dir>-v<version>` commits are skipped.
 
 **First version of a new package.** npm sets a trusted publisher only on a package that exists, so
 the first version is published by hand. Set `version` in its `package.json` (for example `0.1.0`),
 merge that with `release:skip`, then at the merge commit run `npm login`, `pnpm pack` in the
 package directory and `npm publish <tarball> --access public`. Push the tag
-`git tag <dir>-v0.1.0 <merge-sha> && git push origin <dir>-v0.1.0`: the tag push starts
-`release.yml`, which sees the version on npm, publishes nothing and creates the GitHub Release.
+`git tag <dir>-v0.1.0 <merge-sha> && git push origin <dir>-v0.1.0`. The tag push starts nothing; the
+next run on `main` creates its GitHub Release (it is on npm and has none), or run `Release` from the
+Actions tab on `main` with the tag to get it at once.
 On npmjs.com, in the package's settings, add the trusted publisher: GitHub Actions, repository
 `haowjy/meridian-runtime`, workflow `release.yml`, environment `npm`. The next merge that changes
 the package releases `0.1.1` (or whatever its label says) from that tag.
 
 **Publishing an existing tag by hand** (a run failed past recovery, or a backfill): rerun the failed
-jobs, or start `Release` from the Actions tab with the tag name. A tag must be reachable from
-`main` and match its `package.json` version. The `npm` environment allows deployments from `main` and `*-v*` tags.
+jobs, or start `Release` from the Actions tab on `main` with the tag name. A tag must be reachable
+from `main` and match its `package.json` version. The `npm` environment allows deployments from
+`main` only, so nothing publishes from a tag push or from another branch.
 
 ## Git
 

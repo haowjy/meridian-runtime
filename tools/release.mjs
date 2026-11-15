@@ -5,13 +5,14 @@
 //                        render its CHANGELOG.md, commit `release: <dir>-v<version>`, tag
 //                        `<dir>-v<version>`, push to main. Writes `tags=[...]` (the new tags and any
 //                        latest tag not on npm yet) to $GITHUB_OUTPUT.
-//   resolve <tags>       check each tag (a JSON array or one tag) and write `releases` (all) and
-//                        `unpublished` (not on npm yet) to $GITHUB_OUTPUT as JSON.
-//   notes <tag>          print the tag's CHANGELOG.md entry (the GitHub Release body).
+//   resolve <tags>       check each tag (a JSON array or one tag) and write `unpublished` (the ones
+//                        not on npm yet) to $GITHUB_OUTPUT as JSON.
+//   github-releases      create a GitHub Release for every `<dir>-v*` tag whose version is on npm
+//                        and has none yet.
 //   validate-pr <body-file> <base-ref>
 //                        the PR body has a valid `## Changelog` and no CHANGELOG.md is edited.
 //
-// Env for `release`: GH_TOKEN, GITHUB_REPOSITORY, GITHUB_OUTPUT.
+// Env for `release` and `github-releases`: GH_TOKEN, GITHUB_REPOSITORY (and GITHUB_OUTPUT).
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { addEntry, entryBody, mergeNotes, parseNotes, renderEntry } from "./changelog.mjs";
@@ -32,6 +33,9 @@ const setOutput = (name, value) => {
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/;
 const TAG = /^(.+)-v(\d+\.\d+\.\d+(?:-rc\.\d+)?)$/;
 const WALK_CAP = 200;
+const BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
+// What `releaseOne` commits. A PR squash-merged under a title like `release: ...` is not one.
+const RELEASE_SUBJECT = /^release: .+-v\d+\.\d+\.\d+(-rc\.\d+)?$/;
 
 function parseVersion(text) {
   const m = text.match(SEMVER);
@@ -98,7 +102,7 @@ function prFor(sha) {
     const exact = merged.filter((pr) => pr.merge_commit_sha === sha);
     const found = exact.length ? exact : merged;
     if (found.length > 1)
-      die(
+      throw new Error(
         `commit ${sha} resolves to several merged PRs (${found.map((p) => p.number)}); not guessing`,
       );
     prCache.set(sha, found[0] ?? null);
@@ -125,18 +129,20 @@ function touchedSince(dir, ref) {
     "log",
     "--first-parent",
     "--reverse",
-    "--format=%H%x09%s",
+    "--format=%H%x09%s%x09%ae",
     `${ref}..HEAD`,
     "--",
     `packages/${dir}`,
   )
     .split("\n")
     .map((line) => line.split("\t"))
-    .filter(([sha, subject]) => sha && !subject.startsWith("release: "))
+    .filter(
+      ([sha, subject, email]) => sha && !(RELEASE_SUBJECT.test(subject) && email === BOT_EMAIL),
+    )
     .map(([sha]) => sha);
   if (commits.length > WALK_CAP)
-    die(
-      `${commits.length} commits touch ${dir} since ${ref}; the walk costs one API call each and stops at ${WALK_CAP}`,
+    throw new Error(
+      `${commits.length} commits touch ${dir} since ${ref}; the walk costs one API call each and stops at ${WALK_CAP}. Tag the package by hand at a release commit to reset the walk`,
     );
   return commits;
 }
@@ -203,7 +209,7 @@ function releaseOne(dir) {
     "-c",
     "user.name=github-actions[bot]",
     "-c",
-    "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+    `user.email=${BOT_EMAIL}`,
     "commit",
     "-m",
     `release: ${tag}`,
@@ -226,10 +232,20 @@ function isAncestor(commit, of) {
 // instead of replaying our commit, and the release covers whatever landed meanwhile.
 function release() {
   let released = [];
+  const failures = [];
   for (let attempt = 1; ; attempt++) {
     git("fetch", "--quiet", "--force", "--tags", "origin", "main");
     git("reset", "--hard", "origin/main");
-    released = packageDirs().map(releaseOne).filter(Boolean);
+    failures.length = 0;
+    // One package failing leaves the others to release.
+    released = packageDirs().flatMap((dir) => {
+      try {
+        return releaseOne(dir) ?? [];
+      } catch (error) {
+        failures.push(`${dir}: ${error.message}`);
+        return [];
+      }
+    });
     if (released.length === 0) break;
     try {
       git("push", "--atomic", "origin", "HEAD:main", ...released);
@@ -251,6 +267,7 @@ function release() {
     return onNpm(manifestName(dir), latest.text) ? [] : [tag];
   });
   setOutput("tags", JSON.stringify([...new Set([...released, ...pending])]));
+  if (failures.length) die(`not released: ${failures.join("; ")}`);
 }
 
 const manifestName = (dir) => JSON.parse(readFileSync(`packages/${dir}/package.json`, "utf8")).name;
@@ -286,14 +303,57 @@ function resolve(arg) {
       distTag: version.includes("-") ? "next" : "latest",
     };
   });
-  setOutput("releases", JSON.stringify(releases));
   setOutput("unpublished", JSON.stringify(releases.filter((r) => !onNpm(r.name, r.version))));
 }
 
+// The CHANGELOG.md entry as the tag holds it.
 function notes(tag) {
   const [, dir, version] = TAG.exec(tag);
-  const path = `packages/${dir}/CHANGELOG.md`;
-  process.stdout.write(entryBody(existsSync(path) ? readFileSync(path, "utf8") : null, version));
+  let changelog = null;
+  try {
+    changelog = execFileSync("git", ["show", `${tag}:packages/${dir}/CHANGELOG.md`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {} // a package's first versions have no CHANGELOG.md
+  return entryBody(changelog, version);
+}
+
+// Every step is decided from state: a tag on npm with no GitHub Release gets one, whichever run
+// published it, and a tag not on npm never does.
+function githubReleases() {
+  const existing = new Set(
+    JSON.parse(out("gh", ["release", "list", "--limit", "1000", "--json", "tagName"])).map(
+      (r) => r.tagName,
+    ),
+  );
+  const tags = git("tag", "--list", "*-v*").split("\n").filter(Boolean);
+  for (const dir of packageDirs()) {
+    const name = manifestName(dir);
+    for (const tag of tags) {
+      const m = TAG.exec(tag);
+      if (m?.[1] !== dir || existing.has(tag) || !onNpm(name, m[2])) continue;
+      const version = m[2];
+      const body = notes(tag);
+      const args = [
+        "--title",
+        `${name}@${version}`,
+        `--prerelease=${version.includes("-")}`,
+        ...(body ? ["--notes", body] : ["--generate-notes"]),
+      ];
+      try {
+        out("gh", ["release", "create", tag, ...args, "--verify-tag"]);
+      } catch (error) {
+        // A run that overlapped this one made it first.
+        try {
+          out("gh", ["release", "view", tag]);
+        } catch {
+          throw error;
+        }
+      }
+      console.log(`${tag}: GitHub Release created`);
+    }
+  }
 }
 
 function validatePr(bodyFile, baseRef) {
@@ -315,7 +375,7 @@ if (import.meta.filename === process.argv[1]) {
   const commands = {
     release,
     resolve: () => resolve(args[0]),
-    notes: () => notes(args[0]),
+    "github-releases": githubReleases,
     "validate-pr": () => validatePr(args[0], args[1]),
   };
   if (!commands[command]) die(`usage: release.mjs ${Object.keys(commands).join("|")}`);

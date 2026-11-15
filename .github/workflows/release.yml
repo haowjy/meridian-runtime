@@ -4,12 +4,15 @@
 # Push to main: the `tag` job looks at what main holds, not at the push: every package touched since
 # its last `<dir>-v*` tag is bumped and tagged with the strongest `release:*` label among the PRs
 # that touched it (tools/release.mjs). A cancelled, late or failed run loses nothing; the next run
-# picks it up. A tag pushed by hand (the first version of a package, or a backfill) or a manual
-# dispatch with `tag` goes straight to the checks.
+# picks it up. Every step is decided from state, so overlapping runs agree: `publish` skips a
+# version already on npm, and `github-releases` makes a Release for any tag on npm that has none.
+# A manual dispatch with `tag` (a backfill) runs the same steps for that tag. A tag push starts
+# nothing.
 # Everything runs in this one file because npm's trusted publisher names the workflow file: on
 # npmjs.com each package's trusted publisher is this repository, `release.yml` and the `npm`
-# environment. The `npm` environment allows deployments from `main` and from `*-v*` tags, so a
-# tag-push backfill can publish. The token for that is not a secret; it is minted per run.
+# environment. The `npm` environment allows deployments from `main` only, so the workflow file and
+# scripts that run with the token are always main's. The token is not a secret; it is minted per
+# run.
 #
 # The job holding `id-token: write` (`publish`) checks out nothing and installs nothing from the
 # repo: it publishes the tarball `verify` built and checked, so the repo's dependency code never
@@ -19,11 +22,10 @@ name: Release
 on:
   push:
     branches: [main]
-    tags: ["*-v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to check, publish and release, such as gateway-v0.1.0
+        description: Existing tag to check and publish, such as gateway-v0.1.0
         required: true
 
 jobs:
@@ -38,37 +40,36 @@ jobs:
       contents: write
       pull-requests: read
     outputs:
-      releases: ${{ steps.resolve.outputs.releases }}
       unpublished: ${{ steps.resolve.outputs.unpublished }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || (github.ref_type == 'branch' && 'main' || github.ref) }}
+          ref: main
           fetch-depth: 0
 
-      # The scripts come from main, never from a tag a backfill names.
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          path: trusted
-          persist-credentials: false
-
+      # A package that fails (a walk too long) is reported at the end; the others still release.
       - name: Bump, tag and push the packages changed since their last tag
         id: release
-        if: github.event_name == 'push' && github.ref_type == 'branch'
+        if: github.event_name == 'push'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node trusted/tools/release.mjs release
+        run: node tools/release.mjs release
 
       - name: Check each tag and find those not on npm yet
         id: resolve
+        if: steps.release.outputs.tags || inputs.tag
         env:
-          TAGS: ${{ steps.release.outputs.tags || inputs.tag || github.ref_name }}
-        run: node trusted/tools/release.mjs resolve "$TAGS"
+          TAGS: ${{ steps.release.outputs.tags || inputs.tag }}
+        run: node tools/release.mjs resolve "$TAGS"
+
+      - name: Fail the run if a package was not released
+        if: steps.release.outcome == 'failure'
+        run: exit 1
 
   verify:
     needs: tag
-    if: needs.tag.outputs.unpublished != '[]'
+    if: ${{ !cancelled() && needs.tag.outputs.unpublished != '' && needs.tag.outputs.unpublished != '[]' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -98,6 +99,7 @@ jobs:
 
   publish:
     needs: [tag, verify]
+    if: ${{ !cancelled() && needs.verify.result == 'success' }}
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -131,43 +133,26 @@ jobs:
           NAME: ${{ matrix.release.name }}
           VERSION: ${{ matrix.release.version }}
           DIST_TAG: ${{ matrix.release.distTag }}
-        run: npm publish "$RUNNER_TEMP/pack/$(sed 's/^@//; s#/#-#' <<<"$NAME")-$VERSION.tgz" --provenance --access public --tag "$DIST_TAG"
+        run: |
+          # A version already on npm is done, not a failure: an overlapping run may have published it.
+          on_npm() { npm view "$NAME@$VERSION" version >/dev/null 2>&1; }
+          if on_npm; then echo "$NAME@$VERSION is already on npm"; exit 0; fi
+          npm publish "$RUNNER_TEMP/pack/$(sed 's/^@//; s#/#-#' <<<"$NAME")-$VERSION.tgz" --provenance --access public --tag "$DIST_TAG" || on_npm
 
-  # A version on npm with no GitHub Release gets one here, including the hand-published first
-  # version of a package.
-  github-release:
+  # A GitHub Release for every tag on npm that has none, including the hand-published first version
+  # of a package. A tag that never reached npm (a failed verify) gets none.
+  github-releases:
     needs: [tag, publish]
-    if: >-
-      always() && needs.tag.result == 'success' && needs.tag.outputs.releases != '[]'
-      && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        release: ${{ fromJson(needs.tag.outputs.releases) }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: refs/tags/${{ matrix.release.tag }}
-      - uses: actions/checkout@v4
-        with:
           ref: main
-          path: trusted
-          persist-credentials: false
-      - name: Create or refresh the GitHub Release
+          fetch-depth: 0
+      - run: node tools/release.mjs github-releases
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ matrix.release.tag }}
-          TITLE: ${{ matrix.release.name }}@${{ matrix.release.version }}
-          VERSION: ${{ matrix.release.version }}
-        run: |
-          node trusted/tools/release.mjs notes "$TAG" > "$RUNNER_TEMP/notes.md"
-          args=(--title "$TITLE" --prerelease="$([[ $VERSION == *-* ]] && echo true || echo false)")
-          if [[ -s "$RUNNER_TEMP/notes.md" ]]; then args+=(--notes-file "$RUNNER_TEMP/notes.md"); else args+=(--generate-notes); fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" "${args[@]}"
-          else
-            gh release create "$TAG" "${args[@]}" --verify-tag
-          fi
+          GITHUB_REPOSITORY: ${{ github.repository }}
