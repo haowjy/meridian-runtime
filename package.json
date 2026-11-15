@@ -1,6 +1,6 @@
 {
   "name": "@meridian-flow/runtime",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "What an AI product needs to run models: a provider-neutral streaming model gateway (Anthropic, OpenAI, Gemini, OpenAI-compatible) with retry, deadlines and usage normalization.",
   "keywords": [
     "llm",
