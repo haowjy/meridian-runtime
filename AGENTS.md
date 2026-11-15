@@ -31,6 +31,12 @@ packs and checks every package whose version is not on npm yet, publishes it wit
 `gateway-v0.2.0`). The job holding the publish token installs nothing. A version already on npm is
 skipped, so re-running is safe.
 
+A new package's first version is published by hand, because npm sets a trusted publisher only on a
+package that exists: `npm login`, then in the package directory `pnpm pack` and
+`npm publish <tarball> --access public`. Then on npmjs.com, in the package's settings, add the
+trusted publisher: GitHub Actions, repository `haowjy/meridian-runtime`, workflow `publish.yml`,
+environment `npm`. The next run of `publish.yml` tags the hand-published version.
+
 ## Git
 
 Work on a branch and open a PR; `main` takes PRs only. The PR body's `## Changelog` section says

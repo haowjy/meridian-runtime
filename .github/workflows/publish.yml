@@ -1,0 +1,121 @@
+# Publishes every package under packages/ whose version is not on npm yet, then tags it.
+# Release = bump the version in the package's package.json in a PR and merge it.
+# Trusted publishing (OIDC) with provenance: no token secret. On npmjs.com each package's trusted
+# publisher names this repository, this file and the `npm` environment.
+#
+# Three jobs so the publish token never meets dependency code: `verify` installs, checks and packs
+# with read-only permissions; `publish` holds id-token and only runs npm on those tarballs; `tag`
+# pushes the git tags and GitHub releases afterwards.
+name: Publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packages/*/package.json
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      releases: ${{ steps.find.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Find versions not on npm yet
+        id: find
+        run: |
+          node tools/unpublished.mjs > "$RUNNER_TEMP/releases.jsonl"
+          cat "$RUNNER_TEMP/releases.jsonl"
+          echo "releases=$(jq -sc . "$RUNNER_TEMP/releases.jsonl")" >> "$GITHUB_OUTPUT"
+
+      - name: Check the repo, then pack and check each tarball a consumer would install
+        if: steps.find.outputs.releases != '[]'
+        run: |
+          pnpm lint && pnpm typecheck && pnpm test
+          node tools/check-package.mjs $(jq -r .dir "$RUNNER_TEMP/releases.jsonl") --keep "$RUNNER_TEMP/pack"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.find.outputs.releases != '[]'
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/pack/*.tgz
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && needs.verify.outputs.releases != '[]'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.17.0
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Ensure npm supports trusted publishing
+        run: |
+          # npm 12.0.0 omits sigstore from its published bundle (npm/cli#9722).
+          # Keep provenance publishing on the latest verified npm 11 release.
+          npm install -g npm@11.18.0
+          test -f "$(npm root -g)/npm/node_modules/sigstore/package.json"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/pack
+
+      - name: Publish
+        env:
+          RELEASES: ${{ needs.verify.outputs.releases }}
+        run: |
+          echo "$RELEASES" | jq -c '.[]' | while read -r release; do
+            name=$(jq -r .name <<<"$release")
+            version=$(jq -r .version <<<"$release")
+            tag=$(jq -r .distTag <<<"$release")
+            tarball="$RUNNER_TEMP/pack/$(sed 's/^@//; s#/#-#' <<<"$name")-$version.tgz"
+            npm publish "$tarball" --provenance --access public --tag "$tag"
+          done
+
+  # Tags every version that is on npm and has no release yet, including one published by hand
+  # (the first version of a package, before its trusted publisher can be set).
+  tag:
+    needs: [verify, publish]
+    if: always() && needs.verify.result == 'success' && needs.publish.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag and release each published version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for manifest in packages/*/package.json; do
+            dir=$(basename "$(dirname "$manifest")")
+            [[ $(jq -r '.private // false' "$manifest") == true ]] && continue
+            name=$(jq -r .name "$manifest")
+            version=$(jq -r .version "$manifest")
+            git_tag="$dir-v$version"
+            npm view "$name@$version" version >/dev/null 2>&1 || continue
+            if gh release view "$git_tag" >/dev/null 2>&1; then continue; fi
+            prerelease=$([[ $version == *-* ]] && echo --prerelease || true)
+            gh release create "$git_tag" --target "$GITHUB_SHA" \
+              --title "$name@$version" --generate-notes $prerelease
+          done
