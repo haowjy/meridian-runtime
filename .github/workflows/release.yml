@@ -1,15 +1,15 @@
-# Releases each package with changes since its last tag, then publishes it. See AGENTS.md,
-# "Releasing".
+# Releases the package when what ships has changed since its last tag, then publishes it. See
+# AGENTS.md, "Releasing".
 #
-# Push to main: the `tag` job looks at what main holds, not at the push: every package touched since
-# its last `<dir>-v*` tag is bumped and tagged with the strongest `release:*` label among the PRs
-# that touched it (tools/release.mjs). A cancelled, late or failed run loses nothing; the next run
-# picks it up. Every step is decided from state, so overlapping runs agree: `publish` skips a
+# Push to main: the `tag` job looks at what main holds, not at the push: if `src/`, `package.json`,
+# `README.md` or `LICENSE` changed since the last `v*` tag, the version is bumped and tagged with
+# the strongest `release:*` label among the PRs that changed them (tools/release.mjs). A cancelled, late or failed run
+# loses nothing; the next run picks it up. Every step is decided from state, so overlapping runs agree: `publish` skips a
 # version already on npm, and `github-releases` makes a Release for any tag on npm that has none.
 # A manual dispatch with `tag` (a backfill) runs the same steps for that tag. A tag push starts
 # nothing.
 # Everything runs in this one file because npm's trusted publisher names the workflow file: on
-# npmjs.com each package's trusted publisher is this repository, `release.yml` and the `npm`
+# npmjs.com the package's trusted publisher is this repository, `release.yml` and the `npm`
 # environment. The `npm` environment allows deployments from `main` only, so the workflow file and
 # scripts that run with the token are always main's. The token is not a secret; it is minted per
 # run.
@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to check and publish, such as gateway-v0.1.0
+        description: Existing tag to check and publish, such as v0.1.0
         required: true
 
 jobs:
@@ -47,8 +47,8 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      # A package that fails (a walk too long) is reported at the end; the others still release.
-      - name: Bump, tag and push the packages changed since their last tag
+      # A failed release (a walk too long) is reported at the end, after any unpublished tag is found.
+      - name: Bump, tag and push when what ships changed since the last tag
         id: release
         if: github.event_name == 'push'
         continue-on-error: true
@@ -63,7 +63,7 @@ jobs:
           TAGS: ${{ steps.release.outputs.tags || inputs.tag }}
         run: node tools/release.mjs resolve "$TAGS"
 
-      - name: Fail the run if a package was not released
+      - name: Fail the run if the release failed
         if: steps.release.outcome == 'failure'
         run: exit 1
 
@@ -90,7 +90,7 @@ jobs:
       - name: Check the repo, then pack and check the tarball a consumer would install
         run: |
           pnpm lint && pnpm typecheck && pnpm test
-          node tools/check-package.mjs "packages/${{ matrix.release.dir }}" --keep "$RUNNER_TEMP/pack"
+          node tools/check-package.mjs --keep "$RUNNER_TEMP/pack"
       - uses: actions/upload-artifact@v4
         with:
           name: tarball-${{ matrix.release.tag }}
@@ -139,8 +139,8 @@ jobs:
           if on_npm; then echo "$NAME@$VERSION is already on npm"; exit 0; fi
           npm publish "$RUNNER_TEMP/pack/$(sed 's/^@//; s#/#-#' <<<"$NAME")-$VERSION.tgz" --provenance --access public --tag "$DIST_TAG" || on_npm
 
-  # A GitHub Release for every tag on npm that has none, including the hand-published first version
-  # of a package. A tag that never reached npm (a failed verify) gets none.
+  # A GitHub Release for every tag on npm that has none, including the hand-published first version.
+  # A tag that never reached npm (a failed verify) gets none.
   github-releases:
     needs: [tag, publish]
     if: ${{ !cancelled() }}

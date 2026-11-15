@@ -1,20 +1,72 @@
 {
-  "name": "meridian-runtime",
-  "private": true,
+  "name": "@meridian-flow/runtime",
+  "version": "0.1.0",
+  "description": "What an AI product needs to run models: a provider-neutral streaming model gateway (Anthropic, OpenAI, Gemini, OpenAI-compatible) with retry, deadlines and usage normalization.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haowjy/meridian-runtime.git"
+  },
   "type": "module",
+  "sideEffects": false,
   "packageManager": "pnpm@10.34.3",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./gateway": {
+      "types": "./dist/gateway/index.d.ts",
+      "default": "./dist/gateway/index.js"
+    },
+    "./gateway/shapes": {
+      "types": "./dist/gateway/shapes/index.d.ts",
+      "default": "./dist/gateway/shapes/index.js"
+    },
+    "./gateway/mock": {
+      "types": "./dist/gateway/mock.d.ts",
+      "default": "./dist/gateway/mock.js"
+    },
+    "./gateway/mock-script": {
+      "types": "./dist/gateway/mock-script.d.ts",
+      "default": "./dist/gateway/mock-script.js"
+    }
+  },
+  "meridianRuntime": {
+    "nodeFreeEntries": [
+      "./gateway",
+      "./gateway/shapes"
+    ]
+  },
   "scripts": {
-    "build": "pnpm -r run build",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "prepack": "pnpm run build",
     "lint": "biome check .",
     "format:write": "biome check --write .",
-    "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm -r run test",
-    "check:packages": "node tools/check-package.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm check:packages"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "check:package": "node tools/check-package.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm check:package"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.106.0",
+    "@google/genai": "^3.3.0",
+    "jsonrepair": "^3.14.1",
+    "openai": "^6.45.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.1",
-    "@types/node": "catalog:",
-    "typescript": "catalog:"
+    "@types/node": "^24",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "protobufjs": false
+    }
   }
 }

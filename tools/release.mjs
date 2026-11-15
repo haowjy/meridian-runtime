@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // The release process's steps, run by .github/workflows/release.yml and pr-body.yml.
 //
-//   release              release each package touched since its last tag: bump its version,
-//                        render its CHANGELOG.md, commit `release: <dir>-v<version>`, tag
-//                        `<dir>-v<version>`, push to main. Writes `tags=[...]` (the new tags and any
-//                        latest tag not on npm yet) to $GITHUB_OUTPUT.
+//   release              release the package if a PR since the last tag changed what ships: bump
+//                        its version, render CHANGELOG.md, commit `release: v<version>`, tag
+//                        `v<version>`, push to main. Writes `tags=[...]` (the new tag and the
+//                        latest tag if it is not on npm yet) to $GITHUB_OUTPUT.
 //   resolve <tags>       check each tag (a JSON array or one tag) and write `unpublished` (the ones
 //                        not on npm yet) to $GITHUB_OUTPUT as JSON.
-//   github-releases      create a GitHub Release for every `<dir>-v*` tag whose version is on npm
-//                        and has none yet.
+//   github-releases      create a GitHub Release for every `v*` tag whose version is on npm and has
+//                        none yet.
 //   validate-pr <body-file> <base-ref>
-//                        the PR body has a valid `## Changelog` and no CHANGELOG.md is edited.
+//                        the PR body has a valid `## Changelog` and CHANGELOG.md is not edited.
 //
 // Env for `release` and `github-releases`: GH_TOKEN, GITHUB_REPOSITORY (and GITHUB_OUTPUT).
 import { execFileSync } from "node:child_process";
@@ -31,11 +31,13 @@ const setOutput = (name, value) => {
 };
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/;
-const TAG = /^(.+)-v(\d+\.\d+\.\d+(?:-rc\.\d+)?)$/;
+const TAG = /^v(\d+\.\d+\.\d+(?:-rc\.\d+)?)$/;
+// What a consumer gets from the tarball: a change to anything else releases nothing.
+const SHIPPED = ["src", "package.json", "README.md", "LICENSE"];
 const WALK_CAP = 200;
 const BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
 // What `releaseOne` commits. A PR squash-merged under a title like `release: ...` is not one.
-const RELEASE_SUBJECT = /^release: .+-v\d+\.\d+\.\d+(-rc\.\d+)?$/;
+const RELEASE_SUBJECT = /^release: v\d+\.\d+\.\d+(-rc\.\d+)?$/;
 
 function parseVersion(text) {
   const m = text.match(SEMVER);
@@ -54,7 +56,7 @@ const bump = ([major, minor, patch], kind) =>
       ? [major, minor + 1, 0]
       : [major, minor, patch + 1];
 
-// kind: patch | minor | major | rc. `versions` are every release the package has.
+// kind: patch | minor | major | rc. `versions` are every release there is.
 export function nextVersion(versions, kind) {
   const stable = maxOf(versions.filter((v) => v.rc === null));
   const last = maxOf(versions);
@@ -110,21 +112,16 @@ function prFor(sha) {
   return prCache.get(sha);
 }
 
-const packageDirs = () =>
-  git("ls-files", "packages/*/package.json")
-    .split("\n")
-    .filter(Boolean)
-    .map((path) => path.split("/")[1])
-    .filter((dir) => !JSON.parse(readFileSync(`packages/${dir}/package.json`, "utf8")).private);
+const manifest = () => JSON.parse(readFileSync("package.json", "utf8"));
 
-const versionsOf = (dir) =>
-  git("tag", "--merged", "HEAD", "--list", `${dir}-v*`)
+const versionsOf = () =>
+  git("tag", "--merged", "HEAD", "--list", "v*")
     .split("\n")
-    .filter((t) => TAG.test(t) && TAG.exec(t)[1] === dir)
-    .map((t) => parseVersion(TAG.exec(t)[2]));
+    .filter((t) => TAG.test(t))
+    .map((t) => parseVersion(TAG.exec(t)[1]));
 
-// The commits that touched the package since `ref`, oldest first, release commits left out.
-function touchedSince(dir, ref) {
+// The commits that changed what ships since `ref`, oldest first, release commits left out.
+function shippedSince(ref) {
   const commits = git(
     "log",
     "--first-parent",
@@ -132,7 +129,7 @@ function touchedSince(dir, ref) {
     "--format=%H%x09%s%x09%ae",
     `${ref}..HEAD`,
     "--",
-    `packages/${dir}`,
+    ...SHIPPED,
   )
     .split("\n")
     .map((line) => line.split("\t"))
@@ -142,23 +139,23 @@ function touchedSince(dir, ref) {
     .map(([sha]) => sha);
   if (commits.length > WALK_CAP)
     throw new Error(
-      `${commits.length} commits touch ${dir} since ${ref}; the walk costs one API call each and stops at ${WALK_CAP}. Tag the package by hand at a release commit to reset the walk`,
+      `${commits.length} commits changed what ships since ${ref}; the walk costs one API call each and stops at ${WALK_CAP}. Tag a release commit by hand to reset the walk`,
     );
   return commits;
 }
 
-// Release the package if anything touched it since its last tag, on the strongest label among the
-// PRs that did. Decided from what main holds, never from the push that started the run.
-function releaseOne(dir) {
-  const versions = versionsOf(dir);
+// Release if anything that ships changed since the last tag, on the strongest label among the PRs
+// that changed it. Decided from what main holds, never from the push that started the run.
+function releaseOne() {
+  const versions = versionsOf();
   if (versions.length === 0) {
     console.log(
-      `::warning::${dir} has no ${dir}-v<version> tag, so it is not released. Publish its first version by hand and tag it (AGENTS.md, Releasing)`,
+      "::warning::there is no v<version> tag, so nothing is released. Publish the first version by hand and tag it (AGENTS.md, Releasing)",
     );
     return null;
   }
-  const lastTag = `${dir}-v${maxOf(versions).text}`;
-  const fresh = touchedSince(dir, lastTag);
+  const lastTag = `v${maxOf(versions).text}`;
+  const fresh = shippedSince(lastTag);
   if (fresh.length === 0) return null;
 
   const kinds = fresh.map((sha) => {
@@ -168,19 +165,19 @@ function releaseOne(dir) {
   });
   const kind = strongestKind(kinds);
   if (!kind) {
-    notice(`${dir}: every change since ${lastTag} is release:skip; nothing to release`);
+    notice(`every change since ${lastTag} is release:skip; nothing to release`);
     return null;
   }
 
   const version = nextVersion(versions, kind);
-  const tag = `${dir}-v${version}`;
+  const tag = `v${version}`;
 
   // A stable release covers everything since the last stable one, so it carries the notes of the
   // release candidates before it.
   const lastStable = maxOf(versions.filter((v) => v.rc === null));
-  const since = version.includes("-") || !lastStable ? lastTag : `${dir}-v${lastStable.text}`;
+  const since = version.includes("-") || !lastStable ? lastTag : `v${lastStable.text}`;
   const prs = new Map();
-  for (const sha of touchedSince(dir, since)) {
+  for (const sha of shippedSince(since)) {
     const pr = prFor(sha);
     if (pr) prs.set(pr.number, pr);
   }
@@ -195,16 +192,14 @@ function releaseOne(dir) {
   }
 
   const date = new Date().toISOString().slice(0, 10);
-  const changelogPath = `packages/${dir}/CHANGELOG.md`;
-  const changelog = existsSync(changelogPath) ? readFileSync(changelogPath, "utf8") : null;
-  writeFileSync(changelogPath, addEntry(changelog, renderEntry(version, date, mergeNotes(notes))));
-  const manifestPath = `packages/${dir}/package.json`;
+  const changelog = existsSync("CHANGELOG.md") ? readFileSync("CHANGELOG.md", "utf8") : null;
+  writeFileSync("CHANGELOG.md", addEntry(changelog, renderEntry(version, date, mergeNotes(notes))));
   writeFileSync(
-    manifestPath,
-    readFileSync(manifestPath, "utf8").replace(/("version":\s*")[^"]+"/, `$1${version}"`),
+    "package.json",
+    readFileSync("package.json", "utf8").replace(/("version":\s*")[^"]+"/, `$1${version}"`),
   );
 
-  git("add", changelogPath, manifestPath);
+  git("add", "CHANGELOG.md", "package.json");
   git(
     "-c",
     "user.name=github-actions[bot]",
@@ -231,46 +226,37 @@ function isAncestor(commit, of) {
 // Mars's loop, in state form: a rejected push means main moved, so start over from the new main
 // instead of replaying our commit, and the release covers whatever landed meanwhile.
 function release() {
-  let released = [];
-  const failures = [];
+  let released = null;
+  let failure = null;
   for (let attempt = 1; ; attempt++) {
     git("fetch", "--quiet", "--force", "--tags", "origin", "main");
     git("reset", "--hard", "origin/main");
-    failures.length = 0;
-    // One package failing leaves the others to release.
-    released = packageDirs().flatMap((dir) => {
-      try {
-        return releaseOne(dir) ?? [];
-      } catch (error) {
-        failures.push(`${dir}: ${error.message}`);
-        return [];
-      }
-    });
-    if (released.length === 0) break;
+    failure = null;
     try {
-      git("push", "--atomic", "origin", "HEAD:main", ...released);
+      released = releaseOne();
+    } catch (error) {
+      failure = error.message;
+      released = null;
+    }
+    if (!released) break;
+    try {
+      git("push", "--atomic", "origin", "HEAD:main", released);
       break;
     } catch {
       if (attempt === 3) die("could not push the release commit to main after 3 attempts");
       console.log(
         `::warning::push to main rejected on attempt ${attempt}; starting over from main`,
       );
-      for (const tag of released) git("tag", "-d", tag);
+      git("tag", "-d", released);
     }
   }
 
-  // A package's latest tag that never reached npm (a failed or cancelled run) is published now.
-  const pending = packageDirs().flatMap((dir) => {
-    const latest = maxOf(versionsOf(dir));
-    if (!latest) return [];
-    const tag = `${dir}-v${latest.text}`;
-    return onNpm(manifestName(dir), latest.text) ? [] : [tag];
-  });
-  setOutput("tags", JSON.stringify([...new Set([...released, ...pending])]));
-  if (failures.length) die(`not released: ${failures.join("; ")}`);
+  // The latest tag, if it never reached npm (a failed or cancelled run), is published now.
+  const latest = maxOf(versionsOf());
+  const pending = latest && !onNpm(manifest().name, latest.text) ? `v${latest.text}` : null;
+  setOutput("tags", JSON.stringify([...new Set([released, pending].filter(Boolean))]));
+  if (failure) die(`not released: ${failure}`);
 }
-
-const manifestName = (dir) => JSON.parse(readFileSync(`packages/${dir}/package.json`, "utf8")).name;
 
 function onNpm(name, version) {
   try {
@@ -289,16 +275,14 @@ function resolve(arg) {
   git("fetch", "--quiet", "origin", "main");
   const releases = tags.map((tag) => {
     const m = TAG.exec(tag);
-    if (!m) die(`${tag} is not <package-dir>-v<version>`);
-    const [, dir, version] = m;
-    const manifest = JSON.parse(git("show", `${tag}:packages/${dir}/package.json`));
-    if (manifest.private) die(`${dir} is private`);
-    if (manifest.version !== version) die(`${tag}: package.json says ${manifest.version}`);
+    if (!m) die(`${tag} is not v<version>`);
+    const version = m[1];
+    const tagged = JSON.parse(git("show", `${tag}:package.json`));
+    if (tagged.version !== version) die(`${tag}: package.json says ${tagged.version}`);
     if (!isAncestor(tag, "origin/main")) die(`${tag} is not reachable from main`);
     return {
       tag,
-      dir,
-      name: manifest.name,
+      name: tagged.name,
       version,
       distTag: version.includes("-") ? "next" : "latest",
     };
@@ -308,15 +292,14 @@ function resolve(arg) {
 
 // The CHANGELOG.md entry as the tag holds it.
 function notes(tag) {
-  const [, dir, version] = TAG.exec(tag);
   let changelog = null;
   try {
-    changelog = execFileSync("git", ["show", `${tag}:packages/${dir}/CHANGELOG.md`], {
+    changelog = execFileSync("git", ["show", `${tag}:CHANGELOG.md`], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-  } catch {} // a package's first versions have no CHANGELOG.md
-  return entryBody(changelog, version);
+  } catch {} // the first versions have no CHANGELOG.md
+  return entryBody(changelog, TAG.exec(tag)[1]);
 }
 
 // Every step is decided from state: a tag on npm with no GitHub Release gets one, whichever run
@@ -327,32 +310,29 @@ function githubReleases() {
       (r) => r.tagName,
     ),
   );
-  const tags = git("tag", "--list", "*-v*").split("\n").filter(Boolean);
-  for (const dir of packageDirs()) {
-    const name = manifestName(dir);
-    for (const tag of tags) {
-      const m = TAG.exec(tag);
-      if (m?.[1] !== dir || existing.has(tag) || !onNpm(name, m[2])) continue;
-      const version = m[2];
-      const body = notes(tag);
-      const args = [
-        "--title",
-        `${name}@${version}`,
-        `--prerelease=${version.includes("-")}`,
-        ...(body ? ["--notes", body] : ["--generate-notes"]),
-      ];
+  const { name } = manifest();
+  for (const tag of git("tag", "--list", "v*").split("\n").filter(Boolean)) {
+    const m = TAG.exec(tag);
+    if (!m || existing.has(tag) || !onNpm(name, m[1])) continue;
+    const version = m[1];
+    const body = notes(tag);
+    const args = [
+      "--title",
+      `${name}@${version}`,
+      `--prerelease=${version.includes("-")}`,
+      ...(body ? ["--notes", body] : ["--generate-notes"]),
+    ];
+    try {
+      out("gh", ["release", "create", tag, ...args, "--verify-tag"]);
+    } catch (error) {
+      // A run that overlapped this one made it first.
       try {
-        out("gh", ["release", "create", tag, ...args, "--verify-tag"]);
-      } catch (error) {
-        // A run that overlapped this one made it first.
-        try {
-          out("gh", ["release", "view", tag]);
-        } catch {
-          throw error;
-        }
+        out("gh", ["release", "view", tag]);
+      } catch {
+        throw error;
       }
-      console.log(`${tag}: GitHub Release created`);
     }
+    console.log(`${tag}: GitHub Release created`);
   }
 }
 
@@ -361,10 +341,10 @@ function validatePr(bodyFile, baseRef) {
   // Three dots: only what this PR changed, not what the base gained since (a release commit).
   const edited = git("diff", "--name-only", `origin/${baseRef}...HEAD`)
     .split("\n")
-    .filter((p) => p.split("/").at(-1) === "CHANGELOG.md");
-  for (const path of edited)
+    .filter((p) => p === "CHANGELOG.md");
+  if (edited.length)
     errors.push(
-      `${path} is edited; the release job owns it, and renders entries from '## Changelog'`,
+      "CHANGELOG.md is edited; the release job owns it, and renders entries from '## Changelog'",
     );
   for (const error of errors) console.log(`::error::${error}`);
   if (errors.length) process.exit(1);

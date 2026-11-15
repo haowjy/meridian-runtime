@@ -1,7 +1,7 @@
 /**
  * Barrel: the model gateway's public surface — the gateway factory, the provider-neutral
  * domain types, message helpers and the shared data shapes. The mock provider is the
- * separate `./mock` entry, which needs `node:http`.
+ * separate `./gateway/mock` entry, which needs `node:http`.
  */
 
 export { assertModelsOnWire, createGateway } from "./create-gateway.js";
