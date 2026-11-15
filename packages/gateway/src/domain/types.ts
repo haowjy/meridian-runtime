@@ -231,9 +231,8 @@ export interface GenerateRequest {
   /**
    * Credentials for this call, keyed by provider id. The routed provider's entry replaces that
    * provider's `ProviderConfig.auth`; other entries are ignored, so a request re-routed to
-   * another provider never carries this one's credential. Calls with the same key string, or the
-   * same `accessToken` function, share one client and one cached token; a credential object made
-   * fresh for each call is fine. An empty `apiKey` counts as no credential: the provider's own applies.
+   * another provider never carries this one's credential. Calls with the same `accessToken`
+   * function share one cached token; a credential object made fresh for each call is fine. An empty `apiKey` counts as no credential: the provider's own applies.
    */
   auth?: Record<string, ProviderCredential>;
   /** Observability-only context; adapters must never map it into provider requests. */

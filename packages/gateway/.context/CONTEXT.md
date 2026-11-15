@@ -29,10 +29,10 @@ map is keyed by provider id so a wrapper that re-routes a request (a host's mode
 provider's credential to another; entries for other providers are ignored. `ProviderConfig.headers`
 are plain extra headers, not a credential.
 
-- Each adapter derives one SDK client per credential (`adapters/credentials.ts`): a `WeakMap` keyed by the
-  `accessToken` function, a `Map` keyed by the key string. A host may build the credential object
-  inline on every call and still share the client and the token cache. The key map keeps one client per
-  distinct key it has seen.
+- Each adapter keeps one SDK client per `accessToken` function (`adapters/credentials.ts`, a
+  `WeakMap`), so a host may build the credential object inline on every call and still share the
+  token cache. A key's client is derived per call (a few microseconds, nothing to cache), so a host
+  with a key per tenant holds no memory per key.
 - An empty `apiKey` is no credential, on the request and in `ProviderConfig.auth` alike: the
   request falls back to the provider's own credential, then to the placeholder key.
 - Every wire authenticates a token the same way. The SDK gets a placeholder key and a `fetch`

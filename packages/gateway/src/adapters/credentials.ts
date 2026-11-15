@@ -1,9 +1,8 @@
 /**
  * Per-call credentials for the adapters. A request's credential for the routed provider
- * replaces the provider's own (`ProviderConfig.auth`); each adapter derives one SDK client
- * per credential (the token function, or the key string) and reuses it, so calls that carry
- * the same credential share the client's connection state and the token cache, whether or not
- * the host reuses the credential object.
+ * replaces the provider's own (`ProviderConfig.auth`). Each adapter keeps one SDK client per
+ * token function, so calls with the same `accessToken` share its token cache whether or not the
+ * host reuses the credential object; a key's client is derived per call.
  *
  * Every wire authenticates a token through `bearerFetch`: the SDK is given a placeholder key,
  * and every request's `Authorization` header is replaced with the cached token. One rule
@@ -138,7 +137,8 @@ export function bearerClientOptions(
 /**
  * The client for a request: the provider's own, or one derived from the request's credential
  * for this provider; an empty key is no credential. Credentials for other providers are
- * ignored. Clients are kept by what the credential is: the token function, or the key string.
+ * ignored. A token's client is kept by its token function, so its token cache survives across
+ * calls; a key's client is derived per call, since it caches nothing and is cheap to build.
  */
 export function clientForRequest<Client>(
   config: Pick<ProviderConfig, "id">,
@@ -146,7 +146,6 @@ export function clientForRequest<Client>(
   derive: (credential: ProviderCredential) => Client,
 ): (request: GenerateRequest) => Client {
   const byToken = new WeakMap<AccessTokenProvider, Client>();
-  const byKey = new Map<string, Client>();
   return (request) => {
     const credential = request.auth?.[config.id];
     if (!credential || ("apiKey" in credential && !credential.apiKey)) return own;
@@ -158,11 +157,6 @@ export function clientForRequest<Client>(
       }
       return client;
     }
-    let client = byKey.get(credential.apiKey);
-    if (!client) {
-      client = derive(credential);
-      byKey.set(credential.apiKey, client);
-    }
-    return client;
+    return derive(credential);
   };
 }
