@@ -12,3 +12,22 @@ The model gateway. Rationale and policy: [`.context/CONTEXT.md`](.context/CONTEX
   (`node:http`) is only reachable from `./mock`.
 - What a product offers and charges (its model registry and prices) stays in that product; Flow's
   is `apps/server/server/lib/gateway/` there.
+
+## Trying a change in Flow before it is published
+
+Flow depends on `@meridian-flow/gateway` from npm. To run your checkout in Flow's dev stack
+(pnpm 10.34; use the Flow checkout that is yours):
+
+1. Here, `pnpm install`, then `pnpm --filter @meridian-flow/gateway dev` (`tsc --watch` into `dist/`,
+   which is all Flow reads). Leave it running.
+2. In Flow's `pnpm-workspace.yaml`, under `overrides:`, add
+   `"@meridian-flow/gateway": link:<absolute path to this checkout>/packages/gateway`, then `pnpm install`.
+   Flow's `node_modules/@meridian-flow/gateway` is now a symlink to this package.
+3. Flow's server does not reload a linked package: after a change here has compiled, run
+   `pnpm dev --restart` in Flow. (`LIVE_TEST_MODEL=` and `MODEL_PROVIDER=mock` as that run needs.)
+4. When done, stop the watcher and in Flow run
+   `git checkout pnpm-workspace.yaml pnpm-lock.yaml && pnpm install`.
+   A `link:` left in a commit fails CI's frozen install, because the path does not exist there.
+
+Then publish: bump `version` in this package (see the root `AGENTS.md`), merge, and move Flow's
+catalog entry (`'@meridian-flow/gateway'` in `pnpm-workspace.yaml`) to the new version.
