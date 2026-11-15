@@ -2,10 +2,24 @@
   "name": "@meridian-flow/runtime",
   "version": "0.1.0",
   "description": "What an AI product needs to run models: a provider-neutral streaming model gateway (Anthropic, OpenAI, Gemini, OpenAI-compatible) with retry, deadlines and usage normalization.",
+  "keywords": [
+    "llm",
+    "ai",
+    "model-gateway",
+    "anthropic",
+    "openai",
+    "gemini",
+    "streaming",
+    "workload-identity-federation"
+  ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/haowjy/meridian-runtime.git"
+  },
+  "homepage": "https://github.com/haowjy/meridian-runtime#readme",
+  "bugs": {
+    "url": "https://github.com/haowjy/meridian-runtime/issues"
   },
   "type": "module",
   "sideEffects": false,
