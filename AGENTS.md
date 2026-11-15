@@ -31,7 +31,7 @@ package; each part is a subpath entry with its source in `src/<part>/`:
 
 One version for the whole package, like meridian-cli: tag `v<version>`, one `CHANGELOG.md` at the
 root. Releases are automatic: each merge to `main` releases if a PR since the last `v*` tag changed
-what ships (`src/`, `package.json`, `README.md`, `LICENSE`); a CI-only or docs-only PR releases
+what ships (`src/` except tests, `.context/` and `AGENTS.md`; `tsconfig.json`, `tsconfig.build.json`, `package.json`, `README.md`, `LICENSE`: `SHIPPED` in `tools/release.mjs`); a CI-only or docs-only PR releases
 nothing. The labels of those PRs pick the bump, and the strongest one wins (`rc` < `patch` < `minor` < `major`):
 
 | Label                                 | Releases                                                                  |

@@ -32,8 +32,19 @@ const setOutput = (name, value) => {
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/;
 const TAG = /^v(\d+\.\d+\.\d+(?:-rc\.\d+)?)$/;
-// What a consumer gets from the tarball: a change to anything else releases nothing.
-const SHIPPED = ["src", "package.json", "README.md", "LICENSE"];
+// What the tarball is built from (git pathspecs): a change to anything else releases nothing.
+// Tests, `.context/` and `AGENTS.md` under src/ are left out of the build, so out of this too.
+const SHIPPED = [
+  "src",
+  ":(exclude,glob)src/**/*.test.ts",
+  ":(exclude,glob)src/**/.context/**",
+  ":(exclude,glob)src/**/AGENTS.md",
+  "tsconfig.json",
+  "tsconfig.build.json",
+  "package.json",
+  "README.md",
+  "LICENSE",
+];
 const WALK_CAP = 200;
 const BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
 // What `releaseOne` commits. A PR squash-merged under a title like `release: ...` is not one.

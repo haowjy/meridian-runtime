@@ -1,11 +1,12 @@
 # Releases the package when what ships has changed since its last tag, then publishes it. See
 # AGENTS.md, "Releasing".
 #
-# Push to main: the `tag` job looks at what main holds, not at the push: if `src/`, `package.json`,
-# `README.md` or `LICENSE` changed since the last `v*` tag, the version is bumped and tagged with
-# the strongest `release:*` label among the PRs that changed them (tools/release.mjs). A cancelled, late or failed run
-# loses nothing; the next run picks it up. Every step is decided from state, so overlapping runs agree: `publish` skips a
-# version already on npm, and `github-releases` makes a Release for any tag on npm that has none.
+# Push to main: the `tag` job looks at what main holds, not at the push: if anything the tarball is
+# built from (`SHIPPED` in tools/release.mjs) changed since the last `v*` tag, the version is bumped
+# and tagged with the strongest `release:*` label among the PRs that changed it. A cancelled, late
+# or failed run loses nothing; the next run picks it up. Every step is decided from state, so
+# overlapping runs agree: `publish` skips a version already on npm, and `github-releases` makes a
+# Release for any tag on npm that has none.
 # A manual dispatch with `tag` (a backfill) runs the same steps for that tag. A tag push starts
 # nothing.
 # Everything runs in this one file because npm's trusted publisher names the workflow file: on
