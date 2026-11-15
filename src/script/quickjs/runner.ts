@@ -122,6 +122,12 @@ export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptR
       },
       env: {},
       execArgv: [],
+      // Without a small young generation each worker lets garbage pile up (a printing loop reached
+      // 240 MiB before its first collection).
+      resourceLimits: {
+        maxYoungGenerationSizeMb: 8,
+        maxOldGenerationSizeMb: 32 + Math.ceil(memoryBytes / 1048576),
+      },
     });
 
     let end: (outcome: Outcome) => void = () => {};

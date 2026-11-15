@@ -80,6 +80,8 @@ function check() {
           tarball,
           `@types/node@${consumer.typesNode}`,
           `typescript@${consumer.typescript}`,
+          // An optional peer (vitest, for ./script/testing) is not installed unless named.
+          ...Object.entries(packed.peerDependencies ?? {}).map(([dep, range]) => `${dep}@${range}`),
         ],
         project,
       );

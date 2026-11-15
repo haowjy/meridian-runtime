@@ -12,6 +12,10 @@ package; each part is a subpath entry with its source in `src/<part>/`:
   functions that pin a server's tools and turn them and replies into what a model reads. Imports
   nothing from the gateway. Read its [AGENTS.md](src/mcp/AGENTS.md) and
   [.context](src/mcp/.context/CONTEXT.md) before changing it.
+- `src/script` (`./script`, `./script/quickjs`, `./script/testing`): the script port (JavaScript a
+  model wrote, run once with host functions) and a QuickJS-in-WebAssembly runner in a worker
+  thread. Read its [AGENTS.md](src/script/AGENTS.md) and
+  [.context](src/script/.context/CONTEXT.md) before changing it.
 
 `README.md` is the npm page; keep its example true to the API and to real model facts
 (`pnpm check:package` typechecks it).

@@ -99,6 +99,17 @@ const PRELUDE = `(function (host, print, functions) {
     );
 })`;
 
+// QuickJS's own limit does not count everything (twenty thousand 1 KB strings pass an 8 MiB limit),
+// so the instance's memory has a hard maximum too: past it the engine's allocation fails and the
+// script gets an "out of memory" error at once, not after growing to the 2 GiB default. The
+// module's start size (16 MiB) holds its stack and static data; the heap grows from there.
+const PAGE_BYTES = 65536;
+const INITIAL_PAGES = 256;
+const maxPages = Math.max(
+  INITIAL_PAGES,
+  Math.ceil((init.memoryBytes + 16 * 1024 * 1024) / PAGE_BYTES),
+);
+const wasmMemory = new WebAssembly.Memory({ initial: INITIAL_PAGES, maximum: maxPages });
 const SLICE = init.logs.sliceBytes;
 const head = new Uint8Array(init.logs.buffer, 8, init.logs.headBytes);
 const ring = new Uint8Array(init.logs.buffer, 8 + init.logs.headBytes, init.logs.ringBytes);
@@ -150,7 +161,7 @@ function locate(stack: string): { line?: number; column?: number } {
 }
 
 async function main(): Promise<void> {
-  const variant = newVariant(baseVariant, { wasmModule: init.wasmModule });
+  const variant = newVariant(baseVariant, { wasmModule: init.wasmModule, wasmMemory });
   const quickjs = await newQuickJSWASMModuleFromVariant(variant);
   const runtime: QuickJSRuntime = quickjs.newRuntime();
   runtime.setMemoryLimit(init.memoryBytes);
@@ -270,16 +281,32 @@ async function main(): Promise<void> {
     const deferred = pending.get(message.id);
     if (!deferred) return;
     pending.delete(message.id);
-    inEngine(() => {
-      const envelope = context.newString(message.envelope);
-      deferred.resolve(envelope);
-      envelope.dispose();
-    });
-    deferred.dispose();
-    pump();
+    try {
+      inEngine(() => {
+        const envelope = context.newString(message.envelope);
+        deferred.resolve(envelope);
+        envelope.dispose();
+      });
+      deferred.dispose();
+      pump();
+    } catch (error) {
+      fail(error);
+    }
   });
 }
 
-main().catch((error: unknown) => {
-  finish({ type: "unavailable", message: error instanceof Error ? error.message : String(error) });
-});
+// A trap with the instance's memory full is the script running the engine out of memory, which
+// QuickJS can fail to survive; any other failure here is the backend's.
+function fail(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    error instanceof WebAssembly.RuntimeError &&
+    wasmMemory.buffer.byteLength === maxPages * PAGE_BYTES
+  ) {
+    finish({ type: "done", kind: "threw", name: "InternalError", message: "out of memory" });
+  } else {
+    finish({ type: "unavailable", message });
+  }
+}
+
+main().catch(fail);
