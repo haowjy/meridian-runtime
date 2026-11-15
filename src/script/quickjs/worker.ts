@@ -24,6 +24,8 @@ interface Init {
   maxCalls: number;
   maxCallBytes: number;
   maxValueBytes: number;
+  /** Longest error name, error message or unavailable message, in UTF-16 units. */
+  textChars: number;
   /** The layout `logs.ts` reads; keep the two in step. */
   logs: { buffer: SharedArrayBuffer; headBytes: number; ringBytes: number; sliceBytes: number };
 }
@@ -38,12 +40,17 @@ if (!port) throw new Error("worker.ts runs only as a worker thread");
 const WRAPPER_OPEN = "(async function () {";
 
 // Runs inside QuickJS. `host` and `print` are the only handles to the outside, held in this closure
-// so the script cannot reach them. Each result string starts with "r" (the JSON of the returned
-// value) or "t" (the JSON of a thrown error's name, message and stack).
-const PRELUDE = `(function (host, print, functions) {
+// so the script cannot reach them. It returns finalize, which the worker calls on the settled
+// promise: the result string starts with "r" (the JSON of the returned value) or "t" (the JSON of a
+// thrown error's name, message and stack). Everything the prelude uses after the script has run is
+// captured here first, because the script can replace any built-in.
+const PRELUDE = `(function (host, print, functions, textChars) {
   const stringify = JSON.stringify;
   const parse = JSON.parse;
   const toText = String;
+  const uncurry = Function.prototype.bind.bind(Function.prototype.call);
+  const slice = uncurry(String.prototype.slice);
+  const cut = (value) => slice(toText(value), 0, textChars);
   const show = (value) => {
     try {
       if (typeof value === "string") return value;
@@ -76,27 +83,30 @@ const PRELUDE = `(function (host, print, functions) {
     else (globalThis[path.slice(0, dot)] ??= {})[path.slice(dot + 1)] = bind(path);
   }
 
+  // Three JSON strings, one per line. Only strings go through stringify, which never looks for
+  // toJSON on them: an object would, and the script can give every object one.
   const describe = (error) => {
+    const lines = (name, message, stack) =>
+      "t" + stringify(name) + "\\n" + stringify(message) + "\\n" + stringify(stack);
     try {
       if (typeof error === "object" && error !== null)
-        return { name: toText(error.name), message: toText(error.message), stack: toText(error.stack) };
-      return { name: "Error", message: toText(error), stack: "" };
+        return lines(cut(error.name), cut(error.message), cut(error.stack));
+      return lines("Error", cut(error), "");
     } catch {
-      return { name: "Error", message: "[unprintable]", stack: "" };
+      return lines("Error", "[unprintable]", "");
     }
   };
-  return (fn) =>
-    fn().then(
-      (value) => {
-        try {
-          const json = stringify(value);
-          return "r" + (json === undefined ? "null" : json);
-        } catch (error) {
-          return "t" + stringify(describe(error));
-        }
-      },
-      (error) => "t" + stringify(describe(error)),
-    );
+  return (ok, value) => {
+    if (ok) {
+      try {
+        const json = stringify(value);
+        return "r" + (json === undefined ? "null" : json);
+      } catch (error) {
+        return describe(error);
+      }
+    }
+    return describe(value);
+  };
 })`;
 
 // QuickJS's own limit does not count everything (twenty thousand 1 KB strings pass an 8 MiB limit),
@@ -144,10 +154,15 @@ type Outcome =
   | { type: "done"; kind: "timed_out" }
   | { type: "unavailable"; message: string };
 
+const cut = (text: string): string => text.slice(0, init.textChars);
+
 let finished = false;
 function finish(outcome: Outcome): void {
   if (finished) return;
   finished = true;
+  if (outcome.type === "unavailable") outcome = { ...outcome, message: cut(outcome.message) };
+  else if (outcome.kind === "threw")
+    outcome = { ...outcome, name: cut(outcome.name), message: cut(outcome.message) };
   port?.postMessage(outcome);
 }
 
@@ -201,7 +216,10 @@ async function main(): Promise<void> {
   };
   const hostHandle = context.newFunction("host", (pathHandle, jsonHandle) => {
     const path = context.getString(pathHandle);
+    // `stringify(args)` runs `toJSON`, which the script can replace: only an array is a call.
+    if (context.typeof(jsonHandle) !== "string") return refuse("host call arguments are not JSON");
     const json = context.getString(jsonHandle);
+    if (!json.startsWith("[")) return refuse("host call arguments are not an array");
     if (++calls > init.maxCalls)
       return refuse(`too many host calls: the limit is ${init.maxCalls}`);
     if (Buffer.byteLength(json) > init.maxCallBytes)
@@ -222,10 +240,17 @@ async function main(): Promise<void> {
     item.dispose();
   });
 
-  const runHandle = inEngine(() => {
+  const finalize = inEngine(() => {
     const prelude = context.unwrapResult(context.evalCode(PRELUDE, "prelude"));
     return context.unwrapResult(
-      context.callFunction(prelude, context.undefined, hostHandle, printHandle, functionsHandle),
+      context.callFunction(
+        prelude,
+        context.undefined,
+        hostHandle,
+        printHandle,
+        functionsHandle,
+        context.newNumber(init.textChars),
+      ),
     );
   });
 
@@ -246,35 +271,50 @@ async function main(): Promise<void> {
     return;
   }
 
-  const started = inEngine(() =>
-    context.callFunction(runHandle, context.undefined, compiled.value),
-  );
+  const started = inEngine(() => context.callFunction(compiled.value, context.undefined));
   if (started.error)
     throw new Error(`script start failed: ${JSON.stringify(context.dump(started.error))}`);
-  // Attach before the first executePendingJobs, or a script that makes no host call never settles.
-  void context.resolvePromise(started.value).then((settled) => {
-    if (settled.error) {
-      finish({ type: "unavailable", message: JSON.stringify(context.dump(settled.error)) });
+  const promise = started.value;
+
+  // The script's promise is read from the engine, never through `then`, which the script can
+  // replace. A promise settles only while jobs run, so this is checked after each pump.
+  function settle(): void {
+    if (finished) return;
+    const state = context.getPromiseState(promise);
+    if (state.type === "pending") return;
+    const ok = state.type === "fulfilled";
+    const outcome = inEngine(() =>
+      context.callFunction(
+        finalize,
+        context.undefined,
+        ok ? context.true : context.false,
+        ok ? state.value : state.error,
+      ),
+    );
+    // Only running out of memory can fail here: the prelude catches whatever the script's own
+    // values throw.
+    if (outcome.error) {
+      finish({ type: "done", kind: "threw", name: "InternalError", message: "out of memory" });
       return;
     }
-    const result = context.getString(settled.value);
+    const result = context.getString(outcome.value);
     if (result.startsWith("r")) {
       const bytes = Buffer.byteLength(result) - 1;
       if (bytes > init.maxValueBytes) finish({ type: "done", kind: "too_large", bytes });
       else finish({ type: "done", kind: "returned", json: result.slice(1) });
     } else {
-      const error = JSON.parse(result.slice(1)) as { name: string; message: string; stack: string };
-      finish({
-        type: "done",
-        kind: "threw",
-        name: error.name,
-        message: error.message,
-        ...locate(error.stack),
-      });
+      const [name, message, stack] = result
+        .slice(1)
+        .split("\n")
+        .map((line) => JSON.parse(line) as string);
+      finish({ type: "done", kind: "threw", name, message, ...locate(stack) });
     }
-  });
+  }
 
-  const pump = () => inEngine(() => runtime.executePendingJobs());
+  const pump = () => {
+    inEngine(() => runtime.executePendingJobs());
+    settle();
+  };
   pump();
 
   port?.on("message", (message: { type: "reply"; id: number; envelope: string }) => {

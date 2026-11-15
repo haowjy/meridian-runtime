@@ -27,7 +27,7 @@ export interface ScriptRequest {
    * identifiers.
    */
   globals: Record<string, HostFunction | Record<string, HostFunction>>;
-  /** The whole run, host calls included. */
+  /** The whole run, host calls and the engine's start-up included; time queued for a slot is not. */
   wallMs: number;
   /** Time the script's own code may run; waiting on a host call is free. */
   cpuMs: number;
@@ -63,6 +63,9 @@ export interface ScriptRunner {
    * rejects with a `TypeError`.
    */
   run(request: ScriptRequest, signal?: AbortSignal): Promise<ScriptResult>;
-  /** Ends every run still going, each as `aborted`. Later runs are `unavailable`. */
+  /**
+   * Ends every run, running or queued, as `aborted` (a queued one never starts), and resolves once
+   * they have stopped. Later runs are `unavailable`.
+   */
   close(): Promise<void>;
 }

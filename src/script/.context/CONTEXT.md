@@ -32,11 +32,31 @@ not from one that prints or calls, since each message costs the host work. So:
   interrupt handler runs while script code runs and adds the entry in progress. Waiting on a host
   call is outside the engine, so it is free. A builtin that never polls the handler (a long
   `repeat`, a big sort) is bounded by the wall limit.
-- The returned value is stringified in the script and its size checked before it is posted.
+- The returned value is stringified in the script and its size checked before it is posted. A
+  thrown error's name and message, and every `unavailable` message, are cut to 4096 characters
+  (`TEXT_CHARS` in `runner.ts`, passed to the worker).
+
+**A worker is untrusted input to the host.** Everything it posts is shaped by a script, and a
+QuickJS bug that corrupts the instance would be the same thing. `readMessage` in `runner.ts` checks
+each message's shape and bounds its text and never throws; a malformed one ends the run as
+`unavailable`. Once a run has ended (`over` in `runInWorker`) nothing from its worker reaches the
+host: no call starts, no reply is posted, and `end` fires the signal of every call already started.
+
+**The worker does not use what the script can replace.** The script can change any built-in, so the
+prelude captures what it needs before the script runs (`stringify`, `String`, an uncurried
+`slice`) and `finalize` builds the result from them. The worker reads the script's promise from
+the engine (`getPromiseState`, checked after each `executePendingJobs`), never through `then` or
+`Promise.resolve`. A thrown error crosses as three JSON strings, because `stringify` on an object
+runs a `toJSON` the script may have put on `Object.prototype`. The arguments of a host call must
+come out of `stringify(args)` as an array (`[…`); `Array.prototype.toJSON` can otherwise make
+them anything.
 
 **Wall time and abort are the host ending the thread** (`worker.terminate()`), so they hold whatever
 the engine is doing. The host function signals fire first. A run past `maxConcurrent` waits for a
-slot; the wait is not part of `wallMs`.
+slot; the wait is not part of `wallMs`, but starting the worker is (100 to 300 ms on a loaded
+box), so a very small `wallMs` loses a share to it. `close()` ends queued runs as `aborted`
+without starting them, ends running ones, and resolves after their workers have ended. A signal
+already aborted when `run` is called returns `aborted` without taking a slot.
 
 **Memory has two walls, and QuickJS's own is not enough.** `setMemoryLimit` does not count
 everything (twenty thousand 1 KB strings pass an 8 MiB limit). The instance's
@@ -52,8 +72,10 @@ before a collection; the runner sets both.
 
 ## Gotchas
 
-- Attach `resolvePromise` to the script's promise before the first `executePendingJobs`, or a script
-  that makes no host call never settles.
+- The script's promise is settled only while jobs run: `settle` runs after the first
+  `executePendingJobs` too, or a script that makes no host call never finishes.
+- `createQuickJsRunner` checks that the worker file and the `.wasm` exist, so a bundle that lost
+  them fails at server start (see `AGENTS.md`), and throws `TypeError` for `memoryBytes` under 1 MiB.
 - Everything the worker runs through the engine is inside `inEngine`; code outside it that reaches
   the interrupt handler measures from a stale start and times the script out at once.
 - The script's code goes after the wrapper's opening on the same line, so `line` counts from the

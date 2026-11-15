@@ -14,6 +14,11 @@ export interface ScriptConformanceOptions {
    * `unavailable` case is skipped; a backend that has no way to fail that way omits it.
    */
   unavailable?: () => ScriptRunner;
+  /**
+   * A runner that runs one script at a time and queues the rest. Without it the queueing cases
+   * are skipped; a backend that never queues omits it.
+   */
+  oneAtATime?: () => ScriptRunner;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -377,12 +382,153 @@ export function describeScriptRunner(
         expect(seenAbort).toBe(true);
       });
 
+      it("ends a call that arrives after the run ended without starting it, and fires every signal", async () => {
+        const signals: AbortSignal[] = [];
+        const result = await runner().run(
+          request("for (;;) { f(1) }", {
+            wallMs: 400,
+            cpuMs: 60_000,
+            maxCalls: 1_000_000,
+            globals: {
+              f: (_args, signal) => {
+                signals.push(signal);
+                return new Promise<Json>(() => {});
+              },
+            },
+          }),
+        );
+        expect(result).toMatchObject({ kind: "timed_out", limit: "wall" });
+        const atEnd = signals.length;
+        await sleep(300);
+        expect(signals.length).toBe(atEnd);
+        expect(signals.every((signal) => signal.aborted)).toBe(true);
+      });
+
+      it("survives a script that replaces the built-ins its result passes through", async () => {
+        const seen: Json[][] = [];
+        const globals = {
+          f: async (args: Json[]) => {
+            seen.push(args);
+            return null;
+          },
+        };
+        const made = runner();
+        const replacedThen = await made.run(
+          request(
+            `const t = Promise.prototype.then;
+             Promise.prototype.then = function (a, b) { Promise.prototype.then = t; return t.call(this, () => "r{", b); };
+             return 1`,
+          ),
+        );
+        expect(ok(replacedThen).value).toBe(1);
+
+        const replacedToJson = await made.run(
+          request(
+            "Array.prototype.toJSON = () => 5; Object.prototype.toJSON = () => 6; await f(1); return 2",
+            {
+              globals,
+            },
+          ),
+        );
+        expect(replacedToJson.kind).not.toBe("unavailable");
+        expect(seen.every((args) => Array.isArray(args))).toBe(true);
+
+        const replacedStringify = await made.run(
+          request("JSON.stringify = () => 'x'; String = () => 5; return { a: 1 }"),
+        );
+        expect(ok(replacedStringify).value).toEqual({ a: 1 });
+      });
+
+      it("bounds the name and message of a thrown error", async () => {
+        const result = await runner().run(
+          request(
+            "const e = new Error('x'.repeat(5_000_000)); e.name = 'N'.repeat(5_000_000); throw e",
+            { maxValueBytes: 100 },
+          ),
+        );
+        expect(result).toMatchObject({ kind: "threw" });
+        const { name, message } = result as { name: string; message: string };
+        expect(name.length).toBeLessThan(10_000);
+        expect(message.length).toBeLessThan(10_000);
+      });
+
       it("ends every run still going as aborted when the runner closes", async () => {
         const made = runner();
         const pending = made.run(request("await new Promise(() => {})", { wallMs: 20_000 }));
         await sleep(200);
         await made.close();
         expect(await pending).toMatchObject({ kind: "aborted" });
+      });
+    });
+
+    describe("a runner that queues", () => {
+      const queued = (context: { skip: () => never }) => {
+        if (!options.oneAtATime) return context.skip();
+        const made = options.oneAtATime();
+        runners.push(made);
+        return made;
+      };
+      const holder = (release: Promise<void>) =>
+        request("await hold(); return 'held'", {
+          wallMs: 20_000,
+          globals: { hold: () => release.then(() => null) },
+        });
+
+      it("runs a run past the limit when a slot frees, and does not count the wait toward wallMs", async (context) => {
+        const made = queued(context);
+        let free = () => {};
+        const release = new Promise<void>((resolve) => {
+          free = resolve;
+        });
+        const first = made.run(holder(release));
+        const second = made.run(request("return 'second'", { wallMs: 1_500 }));
+        await sleep(1_800);
+        free();
+        expect(ok(await first).value).toBe("held");
+        expect(ok(await second).value).toBe("second");
+      });
+
+      it("takes a queued run out of the line when its signal fires, at once", async (context) => {
+        const made = queued(context);
+        let free = () => {};
+        const release = new Promise<void>((resolve) => {
+          free = resolve;
+        });
+        const first = made.run(holder(release));
+        const controller = new AbortController();
+        const second = made.run(request("return 1"), controller.signal);
+        await sleep(100);
+        const started = Date.now();
+        controller.abort();
+        expect(await second).toMatchObject({ kind: "aborted" });
+        expect(Date.now() - started).toBeLessThan(500);
+        expect(await made.run(request("return 1"), AbortSignal.abort())).toMatchObject({
+          kind: "aborted",
+        });
+        free();
+        await first;
+      });
+
+      it("ends queued runs as aborted without starting them when the runner closes, after its workers have ended", async (context) => {
+        const made = queued(context);
+        let ran = 0;
+        const globals = {
+          effect: async () => {
+            ran++;
+            return null;
+          },
+          hold: () => new Promise<Json>(() => {}),
+        };
+        const first = made.run(request("await hold()", { wallMs: 20_000, globals }));
+        const queuedRuns = [1, 2].map(() =>
+          made.run(request("await effect(); return 1", { globals })),
+        );
+        await sleep(200);
+        await made.close();
+        expect(await first).toMatchObject({ kind: "aborted" });
+        for (const run of queuedRuns) expect(await run).toMatchObject({ kind: "aborted" });
+        await sleep(200);
+        expect(ran).toBe(0);
       });
     });
   });

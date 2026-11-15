@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import {
   type HostFunction,
@@ -12,7 +14,7 @@ import {
 import { createLogLayout, readLogs } from "./logs.js";
 
 export interface QuickJsRunnerOptions {
-  /** QuickJS's heap limit for one run. Default 32 MiB. */
+  /** QuickJS's heap limit for one run, at least 1 MiB. Default 32 MiB. */
   memoryBytes?: number;
   /** Runs at once; a run past it waits its turn. Default 16. */
   maxConcurrent?: number;
@@ -20,6 +22,11 @@ export interface QuickJsRunnerOptions {
 
 const DEFAULT_MEMORY_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT = 16;
+const MIN_MEMORY_BYTES = 1024 * 1024;
+/** The longest `setTimeout` delay; a longer one fires after 1 ms. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+/** Longest error name, error message or unavailable message a worker may send, in UTF-16 units. */
+const TEXT_CHARS = 4096;
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 // Running from source (tests, `node --experimental-strip-types`), the worker sits beside this file
@@ -29,33 +36,33 @@ const workerUrl = new URL(
   import.meta.url,
 );
 
-type Outcome =
-  | { kind: "returned"; value: Json }
-  | { kind: "threw"; name: string; message: string; line?: number; column?: number }
-  | { kind: "timed_out"; limit: "wall" | "cpu" }
-  | { kind: "too_large"; bytes: number }
-  | { kind: "aborted" }
-  | { kind: "unavailable"; message: string };
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+type Outcome = DistributiveOmit<ScriptResult, "logs">;
 
+/** What the host accepts from a worker, after it has checked the message. */
 type WorkerMessage =
   | { type: "call"; id: number; path: string; args: string }
-  | { type: "done"; kind: "returned"; json: string }
-  | { type: "done"; kind: "threw"; name: string; message: string; line?: number; column?: number }
-  | { type: "done"; kind: "too_large"; bytes: number }
-  | { type: "done"; kind: "timed_out" }
-  | { type: "unavailable"; message: string };
+  | { type: "done"; outcome: Outcome };
 
 export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptRunner {
   const memoryBytes = options.memoryBytes ?? DEFAULT_MEMORY_BYTES;
   const maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
   if (!(maxConcurrent >= 1)) throw new TypeError("maxConcurrent must be at least 1");
+  if (!(memoryBytes >= MIN_MEMORY_BYTES) || !Number.isFinite(memoryBytes))
+    throw new TypeError(`memoryBytes must be a number of at least ${MIN_MEMORY_BYTES}`);
 
-  // Compiled once, here; each worker instantiates it afresh, so no run shares memory with another.
+  // A bundle that lost the worker or the .wasm fails here, at server start, and not on the first
+  // run a writer's model makes.
+  if (!existsSync(fileURLToPath(workerUrl)))
+    throw new Error(`the script worker is missing: ${fileURLToPath(workerUrl)}`);
+  const wasmPath = createRequire(import.meta.url).resolve(
+    "@jitl/quickjs-wasmfile-release-sync/wasm",
+  );
+
+  // Compiled once; each worker instantiates it afresh, so no run shares memory with another.
   let wasmModule: Promise<WebAssembly.Module> | undefined;
   const loadWasm = (): Promise<WebAssembly.Module> => {
-    wasmModule ??= readFile(
-      createRequire(import.meta.url).resolve("@jitl/quickjs-wasmfile-release-sync/wasm"),
-    )
+    wasmModule ??= readFile(wasmPath)
       .then((bytes) => WebAssembly.compile(bytes))
       .catch((error: unknown) => {
         wasmModule = undefined;
@@ -65,30 +72,36 @@ export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptR
   };
 
   let closed = false;
+  const active = new Set<Promise<ScriptResult>>();
   const running = new Set<() => void>();
   let free = maxConcurrent;
-  const waiting: (() => void)[] = [];
+  const waiting: { turn: () => void; leave: () => void }[] = [];
+  /** True when the run has a slot; false when its signal fired first or the runner closed. */
   const acquire = (signal: AbortSignal | undefined): Promise<boolean> => {
+    if (signal?.aborted) return Promise.resolve(false);
     if (free > 0) {
       free--;
       return Promise.resolve(true);
     }
     return new Promise((resolve) => {
-      const turn = () => {
-        signal?.removeEventListener("abort", leave);
-        resolve(true);
+      const waiter = {
+        turn: () => {
+          signal?.removeEventListener("abort", waiter.leave);
+          resolve(true);
+        },
+        leave: () => {
+          signal?.removeEventListener("abort", waiter.leave);
+          waiting.splice(waiting.indexOf(waiter), 1);
+          resolve(false);
+        },
       };
-      const leave = () => {
-        waiting.splice(waiting.indexOf(turn), 1);
-        resolve(false);
-      };
-      waiting.push(turn);
-      signal?.addEventListener("abort", leave, { once: true });
+      waiting.push(waiter);
+      signal?.addEventListener("abort", waiter.leave, { once: true });
     });
   };
   const release = () => {
     const next = waiting.shift();
-    if (next) next();
+    if (next) next.turn();
     else free++;
   };
 
@@ -104,8 +117,9 @@ export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptR
     try {
       wasm = await loadWasm();
     } catch (error) {
-      return withLogs({ kind: "unavailable", message: messageOf(error) });
+      return withLogs({ kind: "unavailable", message: bounded(messageOf(error)) });
     }
+    if (closed || signal?.aborted) return withLogs({ kind: "aborted" });
 
     const calls = new Map<number, AbortController>();
     const worker = new Worker(workerUrl, {
@@ -118,6 +132,7 @@ export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptR
         maxCalls: request.maxCalls,
         maxCallBytes: request.maxCallBytes,
         maxValueBytes: request.maxValueBytes,
+        textChars: TEXT_CHARS,
         logs,
       },
       env: {},
@@ -130,38 +145,38 @@ export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptR
       },
     });
 
-    let end: (outcome: Outcome) => void = () => {};
+    // Once a run has ended nothing from its worker reaches the host: no call starts, no reply is
+    // posted, and every call already started has had its signal fired.
+    let over = false;
+    let settle: (outcome: Outcome) => void = () => {};
     const ended = new Promise<Outcome>((resolve) => {
-      end = resolve;
+      settle = resolve;
     });
-    const wall = setTimeout(() => end({ kind: "timed_out", limit: "wall" }), request.wallMs);
+    const end = (outcome: Outcome): void => {
+      if (over) return;
+      over = true;
+      for (const controller of calls.values()) controller.abort();
+      calls.clear();
+      settle(outcome);
+    };
+    const wall = setTimeout(
+      () => end({ kind: "timed_out", limit: "wall" }),
+      Math.min(request.wallMs, MAX_TIMER_MS),
+    );
     const abort = () => end({ kind: "aborted" });
-    const close = () => end({ kind: "aborted" });
-    running.add(close);
-    if (signal?.aborted) abort();
-    else signal?.addEventListener("abort", abort, { once: true });
+    running.add(abort);
+    signal?.addEventListener("abort", abort, { once: true });
 
-    worker.on("error", (error) => end({ kind: "unavailable", message: messageOf(error) }));
+    worker.on("error", (error) => end({ kind: "unavailable", message: bounded(messageOf(error)) }));
     worker.on("exit", (code) =>
       end({ kind: "unavailable", message: `worker exited with ${code}` }),
     );
-    worker.on("message", (message: WorkerMessage) => {
-      if (message.type === "call") {
-        void answer(message);
-      } else if (message.type === "unavailable") {
-        end(
-          message.type === "unavailable"
-            ? { kind: "unavailable", message: message.message }
-            : message,
-        );
-      } else if (message.kind === "returned") {
-        end({ kind: "returned", value: JSON.parse(message.json) as Json });
-      } else if (message.kind === "timed_out") {
-        end({ kind: "timed_out", limit: "cpu" });
-      } else {
-        const { type: _type, ...outcome } = message;
-        end(outcome);
-      }
+    worker.on("message", (raw: unknown) => {
+      if (over) return;
+      const message = readMessage(raw, functions, request.maxValueBytes);
+      if (!message) end({ kind: "unavailable", message: "the worker sent a malformed message" });
+      else if (message.type === "call") void answer(message);
+      else end(message.outcome);
     });
 
     async function answer(message: { id: number; path: string; args: string }): Promise<void> {
@@ -175,15 +190,16 @@ export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptR
       } catch (error) {
         envelope = JSON.stringify(failure(error));
       }
-      if (calls.delete(message.id)) worker.postMessage({ type: "reply", id: message.id, envelope });
+      if (!over) {
+        calls.delete(message.id);
+        worker.postMessage({ type: "reply", id: message.id, envelope });
+      }
     }
 
     const outcome = await ended;
     clearTimeout(wall);
     signal?.removeEventListener("abort", abort);
-    running.delete(close);
-    for (const controller of calls.values()) controller.abort();
-    calls.clear();
+    running.delete(abort);
     await worker.terminate();
     return withLogs(outcome);
   }
@@ -198,18 +214,23 @@ export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptR
           logs: { text: "", cutBytes: 0 },
         };
       }
-      if (!(await acquire(signal))) {
-        return { kind: "aborted", logs: { text: "", cutBytes: 0 } };
-      }
-      try {
-        return await runInWorker(request, functions, signal);
-      } finally {
-        release();
-      }
+      const result = (async (): Promise<ScriptResult> => {
+        if (!(await acquire(signal))) return { kind: "aborted", logs: { text: "", cutBytes: 0 } };
+        try {
+          return await runInWorker(request, functions, signal);
+        } finally {
+          release();
+        }
+      })();
+      active.add(result);
+      void result.finally(() => active.delete(result));
+      return result;
     },
     async close() {
       closed = true;
+      for (const waiter of [...waiting]) waiter.leave();
       for (const abort of [...running]) abort();
+      await Promise.allSettled([...active]);
     },
   };
 }
@@ -254,4 +275,59 @@ function failure(error: unknown): { ok: false; message: string; data?: Json } {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+const isCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const bounded = (value: string): string => value.slice(0, TEXT_CHARS);
+
+/**
+ * A worker's message is input from a place a script can reach: check its shape, bound its text,
+ * and turn anything else into `undefined` (the run is then `unavailable`). Never throws.
+ */
+function readMessage(
+  raw: unknown,
+  functions: ReadonlyMap<string, HostFunction>,
+  maxValueBytes: number,
+): WorkerMessage | undefined {
+  if (!isObject(raw)) return undefined;
+  if (raw.type === "call") {
+    const { id, path, args } = raw;
+    if (!isCount(id) || typeof path !== "string" || !functions.has(path)) return undefined;
+    if (typeof args !== "string") return undefined;
+    return { type: "call", id, path, args };
+  }
+  if (raw.type === "unavailable") {
+    if (typeof raw.message !== "string") return undefined;
+    return { type: "done", outcome: { kind: "unavailable", message: bounded(raw.message) } };
+  }
+  if (raw.type !== "done") return undefined;
+  switch (raw.kind) {
+    case "returned": {
+      if (typeof raw.json !== "string" || raw.json.length > maxValueBytes) return undefined;
+      try {
+        return { type: "done", outcome: { kind: "returned", value: JSON.parse(raw.json) as Json } };
+      } catch {
+        return undefined;
+      }
+    }
+    case "threw": {
+      const { name, message, line, column } = raw;
+      if (typeof name !== "string" || typeof message !== "string") return undefined;
+      const outcome: Outcome = { kind: "threw", name: bounded(name), message: bounded(message) };
+      if (isCount(line)) outcome.line = line;
+      if (isCount(column)) outcome.column = column;
+      return { type: "done", outcome };
+    }
+    case "too_large":
+      return isCount(raw.bytes)
+        ? { type: "done", outcome: { kind: "too_large", bytes: raw.bytes } }
+        : undefined;
+    case "timed_out":
+      return { type: "done", outcome: { kind: "timed_out", limit: "cpu" } };
+    default:
+      return undefined;
+  }
 }

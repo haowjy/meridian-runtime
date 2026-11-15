@@ -11,4 +11,5 @@ describeScriptRunner("QuickJS in a worker thread", () => createQuickJsRunner(), 
     vi.spyOn(WebAssembly, "compile").mockRejectedValueOnce(new Error("the wasm would not load"));
     return createQuickJsRunner();
   },
+  oneAtATime: () => createQuickJsRunner({ maxConcurrent: 1 }),
 });
