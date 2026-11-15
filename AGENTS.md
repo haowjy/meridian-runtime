@@ -8,7 +8,10 @@ package; each part is a subpath entry with its source in `src/<part>/`:
   streaming port over Anthropic, OpenAI, Gemini and OpenAI-compatible providers. Read its
   [AGENTS.md](src/gateway/AGENTS.md) and
   [.context](src/gateway/.context/CONTEXT.md) before changing it.
-- `./mcp` is planned.
+- `src/mcp` (`./mcp`): a client for MCP servers over stdio and Streamable HTTP, with the pure
+  functions that pin a server's tools and turn them and replies into what a model reads. Imports
+  nothing from the gateway. Read its [AGENTS.md](src/mcp/AGENTS.md) and
+  [.context](src/mcp/.context/CONTEXT.md) before changing it.
 
 `README.md` is the npm page; keep its example true to the API and to real model facts
 (`pnpm check:package` typechecks it).

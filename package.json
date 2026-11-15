@@ -1,7 +1,7 @@
 {
   "name": "@meridian-flow/runtime",
   "version": "0.2.0",
-  "description": "What an AI product needs to run models: a provider-neutral streaming model gateway (Anthropic, OpenAI, Gemini, OpenAI-compatible) with retry, deadlines and usage normalization.",
+  "description": "What an AI product needs to run models: a provider-neutral streaming model gateway (Anthropic, OpenAI, Gemini, OpenAI-compatible) with retry, deadlines and usage normalization, and an MCP client.",
   "keywords": [
     "llm",
     "ai",
@@ -10,7 +10,9 @@
     "openai",
     "gemini",
     "streaming",
-    "workload-identity-federation"
+    "workload-identity-federation",
+    "mcp",
+    "model-context-protocol"
   ],
   "license": "Apache-2.0",
   "repository": {
@@ -46,6 +48,10 @@
     "./gateway/mock-script": {
       "types": "./dist/gateway/mock-script.d.ts",
       "default": "./dist/gateway/mock-script.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "default": "./dist/mcp/index.js"
     }
   },
   "meridianRuntime": {
@@ -68,6 +74,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
     "@google/genai": "^3.3.0",
+    "@modelcontextprotocol/client": "^2.4.0",
     "jsonrepair": "^3.15.0",
     "openai": "^7.57.0",
     "zod": "^4.6.7"

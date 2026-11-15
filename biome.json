@@ -18,8 +18,32 @@
   },
   "overrides": [
     {
-      "includes": ["tools/**", "**/*.test.ts"],
+      "includes": ["tools/**", "**/*.test.ts", "src/mcp/testing/**"],
       "linter": { "rules": { "style": { "noProcessEnv": "off" } } }
+    },
+    {
+      "includes": ["src/mcp/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["../gateway", "../gateway/*"],
+                    "message": "./mcp imports nothing from ./gateway."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/mcp/gateway-types.test.ts"],
+      "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
     },
     {
       "includes": ["src/gateway/shapes/**"],
