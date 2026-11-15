@@ -18,6 +18,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       },
     });
   if (method === "ping") return send({ id, result: {} });
+  if (method === "tools/list") {
+    const first = params?.cursor === undefined;
+    return send({
+      id,
+      result: {
+        tools: [{ name: first ? "echo" : "big", inputSchema: { type: "object" } }],
+        ...(first ? { nextCursor: "2" } : {}),
+      },
+    });
+  }
   if (method !== "tools/call")
     return send({ id, error: { code: -32601, message: "Method not found" } });
   const args = params.arguments ?? {};

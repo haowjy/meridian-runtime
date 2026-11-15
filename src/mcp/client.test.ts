@@ -1,6 +1,7 @@
-// Pins implementation decisions: replies are matched to calls through the identity of the
-// `arguments` object at the SDK transport's `send`, which rests on an SDK internal. An SDK upgrade
-// can break it with no type error; these tests are what catches that.
+// Pins implementation decisions: replies are matched to requests at the SDK transport's `send`
+// (a call through the identity of its `arguments`, a list or ping through a reference in `_meta`),
+// which rests on SDK internals. An SDK upgrade can break it with no type error; these tests are
+// what catches that.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createMcpClient } from "./client.js";
 import { startServer, type TestServer } from "./testing/server.js";
@@ -23,6 +24,15 @@ const stdioServer = (key = "stdio"): Server => ({
 let server: TestServer;
 let client: McpClient;
 const http = (key = "http"): Server => ({ key, spec: { transport: "http", url: server.url } });
+
+/** A paged list and a check on a live session: both are matched by the same route as a call. */
+async function listAndCheck(target: Server): Promise<void> {
+  await client.call(target, { tool: tool("echo"), arguments: {} }, { timeoutMs: 5000 });
+  const listing = await client.list(target, { timeoutMs: 5000 });
+  expect(listing).toHaveProperty("tools");
+  expect((listing as { tools: unknown[] }).tools.length).toBeGreaterThanOrEqual(2);
+  expect(await client.check(target, { timeoutMs: 5000 })).toMatchObject({ kind: "reachable" });
+}
 
 afterEach(async () => {
   await client?.close();
@@ -48,6 +58,14 @@ describe.each([{ sse: false }, { sse: true }])("over HTTP (sse: $sse)", ({ sse }
       [{ type: "text", text: "echo b" }],
       [{ type: "text", text: "echo c" }],
     ]);
+  });
+
+  it("collects a paged list, and checks a live session", async () => {
+    server.behaviour.pages = 3;
+    await listAndCheck(http());
+    expect(server.seen.filter((s) => s.rpc === "tools/list")).toHaveLength(3);
+    expect(server.seen.filter((s) => s.rpc === "ping")).toHaveLength(1);
+    expect(server.seen.filter((s) => s.rpc === "initialize")).toHaveLength(1);
   });
 
   it("returns the reply as the server sent it, even when the SDK would throw", async () => {
@@ -225,6 +243,10 @@ describe("over stdio", () => {
       [{ type: "text", text: "echo b" }],
       [{ type: "text", text: "echo c" }],
     ]);
+  });
+
+  it("collects a paged list, and checks a live session", async () => {
+    await listAndCheck(stdioServer());
   });
 
   it("ends the session on a reply over the limit, and starts a new one", async () => {

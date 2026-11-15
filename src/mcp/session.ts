@@ -1,6 +1,8 @@
 import {
   Client,
   type JSONRPCMessage,
+  SdkError,
+  SdkErrorCode,
   StreamableHTTPClientTransport,
   type Tool,
   type Transport,
@@ -20,8 +22,10 @@ export type SessionEnd = Extract<McpEvent, { type: "session_ended" }>["reason"];
 
 /** One request's trip over the wire. The caller reads it when `exchange` returns. */
 export interface Exchange {
-  /** True once the request reached the transport: from then on it may have run. */
+  /** True once the transport took the request: from then on it may have run. */
   sent: boolean;
+  /** The session ended while the request was in flight and no reply had come. */
+  lost?: boolean;
   /** The JSON-RPC response as it came off the wire, before the SDK parsed or rejected it. */
   raw?: { result: JsonObject } | { error: JsonObject };
   /** What the SDK threw, when it threw. */
@@ -34,6 +38,8 @@ export interface Exchange {
 // The SDK's own timeout would otherwise default to 60 s; every call's deadline is the client's.
 const NO_SDK_TIMEOUT = 2 ** 31 - 1;
 const BUFFER_EXCEEDED = "ReadBuffer exceeded";
+// Marks a list or ping request: the SDK may rebuild `params` but keeps what is in `_meta`.
+const REF_KEY = "io.meridian-flow/ref";
 
 const isObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -49,13 +55,18 @@ function lines(onLine: (line: string) => void): (chunk: Buffer) => void {
 
 /**
  * A live link to one MCP server. It reads each reply under the SDK: the transport's `send` names
- * the request id of the call being made (matched through the identity of the object the call
- * handed the SDK, which reaches `send` unchanged), and the incoming-message hook keeps the raw
+ * the request id of the request being made (a call is matched through the identity of its
+ * `arguments`, which reaches `send` unchanged; a list or ping through a reference in `_meta`,
+ * which survives the SDK rebuilding `params`), and the incoming-message hook keeps the raw
  * response for that id. The outcome is decided from that raw message, not from what the SDK made
  * of it.
+ *
+ * A session is `ended` from the moment anything starts ending it (close, idle timer, a reply over
+ * the limit, the transport closing), and leaves its registry then: the teardown that follows may
+ * take seconds and must not receive new requests.
  */
 export class Session {
-  /** Set by the registry; called once, when the link is gone. */
+  /** Set by the registry; called once, when the session starts ending. */
   onEnded?: (reason: SessionEnd) => void;
   ended = false;
   server = { name: "", version: "" };
@@ -64,11 +75,11 @@ export class Session {
 
   private readonly client: Client;
   private readonly transport: Transport;
-  private readonly waiting = new WeakMap<object, Exchange>();
+  private readonly waiting = new Map<object | string, Exchange>();
   private readonly byId = new Map<number | string, Exchange>();
   private readonly aborts = new Map<Exchange, () => void>();
-  private endReason: SessionEnd = "disconnected";
   private closing: Promise<void> | undefined;
+  private refs = 0;
   private active = 0;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -101,6 +112,7 @@ export class Session {
       });
     } catch (error) {
       session.ended = true;
+      clearTimeout(session.idleTimer);
       await session.client.close().catch(() => {});
       throw error;
     }
@@ -179,21 +191,33 @@ export class Session {
       // The stdio reader closes the transport when a line passes the limit, and says so only here.
       if (error.message.startsWith(BUFFER_EXCEEDED)) this.stdioReplyTooLarge();
     };
-    this.client.onclose = () => this.end();
+    this.client.onclose = () => this.finish("disconnected");
 
     const send = transport.send.bind(transport);
-    transport.send = (message, options) => {
+    transport.send = async (message, options) => {
+      let exchange: Exchange | undefined;
       if ("method" in message && "id" in message && message.id !== undefined) {
-        const params = message.params as { arguments?: object } | undefined;
-        const token = message.method === "tools/call" ? params?.arguments : params;
-        const exchange = token ? this.waiting.get(token) : undefined;
+        const params = message.params as
+          | { arguments?: object; _meta?: Record<string, unknown> }
+          | undefined;
+        const token =
+          message.method === "tools/call" ? params?.arguments : params?._meta?.[REF_KEY];
+        exchange =
+          typeof token === "string" || isObject(token) ? this.waiting.get(token) : undefined;
         if (exchange) {
           exchange.sent = true;
           exchange.id = message.id;
           this.byId.set(message.id, exchange);
         }
       }
-      return send(message, options);
+      try {
+        await send(message, options);
+      } catch (error) {
+        // Not connected means nothing was written, so the request can safely go to a new session.
+        if (exchange && error instanceof SdkError && error.code === SdkErrorCode.NotConnected)
+          exchange.sent = false;
+        throw error;
+      }
     };
   }
 
@@ -208,15 +232,21 @@ export class Session {
     // Which call's reply it was is known only when one call is in flight.
     const only = this.byId.size === 1 ? [...this.byId.values()][0] : undefined;
     if (only) only.tooLarge = this.cfg.maxReplyBytes + 1;
-    this.endReason = "too_large";
+    void this.close("too_large");
   }
 
-  private end(): void {
+  /** The one place a session starts ending. Synchronous, so no later request can reach it. */
+  private finish(reason: SessionEnd): void {
     if (this.ended) return;
     this.ended = true;
     clearTimeout(this.idleTimer);
-    this.cfg.onEvent?.({ type: "session_ended", key: this.key, reason: this.endReason });
-    this.onEnded?.(this.endReason);
+    this.cfg.onEvent?.({ type: "session_ended", key: this.key, reason });
+    this.onEnded?.(reason);
+    // The calls in flight settle now, not when a child process finally exits.
+    for (const [exchange, abort] of this.aborts) {
+      exchange.lost = true;
+      abort();
+    }
   }
 
   private armIdle(): void {
@@ -227,11 +257,12 @@ export class Session {
   }
 
   /**
-   * Runs one request. `token` is the object the request hands the SDK that `send` will see
-   * (a call's `arguments`, a list's `params`). Never throws: the Exchange says what happened.
+   * Runs one request. `token` is what `send` will see to tell it from the others: the `arguments`
+   * object of a call, or the reference `run` put in a list or ping's `_meta`. Never throws: the
+   * Exchange says what happened.
    */
-  async exchange(
-    token: object,
+  private async exchange(
+    token: object | string,
     signal: AbortSignal,
     run: (signal: AbortSignal, timeout: number) => Promise<unknown>,
   ): Promise<Exchange> {
@@ -246,6 +277,7 @@ export class Session {
     } catch (error) {
       exchange.error = error;
     } finally {
+      this.waiting.delete(token);
       if (exchange.id !== undefined) this.byId.delete(exchange.id);
       this.aborts.delete(exchange);
       this.active--;
@@ -273,25 +305,36 @@ export class Session {
     );
   }
 
-  async listPage(cursor: string | undefined, signal: AbortSignal): Promise<Exchange> {
-    const params = cursor === undefined ? {} : { cursor };
-    return this.exchange(params, signal, (signal, timeout) =>
-      this.client.request({ method: "tools/list", params }, { signal, timeout }),
+  /** A request without arguments of its own: `_meta` carries what tells it from the others. */
+  private plain(
+    method: "tools/list" | "ping",
+    params: JsonObject,
+    signal: AbortSignal,
+  ): Promise<Exchange> {
+    const ref = `${++this.refs}`;
+    const withRef = { ...params, _meta: { [REF_KEY]: ref } };
+    return this.exchange(ref, signal, (signal, timeout) =>
+      this.client.request({ method, params: withRef }, { signal, timeout }),
     );
   }
 
-  async ping(signal: AbortSignal): Promise<Exchange> {
-    return this.exchange({}, signal, (signal, timeout) => this.client.ping({ signal, timeout }));
+  listPage(cursor: string | undefined, signal: AbortSignal): Promise<Exchange> {
+    return this.plain("tools/list", cursor === undefined ? {} : { cursor }, signal);
+  }
+
+  ping(signal: AbortSignal): Promise<Exchange> {
+    return this.plain("ping", {}, signal);
   }
 
   close(reason: SessionEnd = "closed"): Promise<void> {
-    this.closing ??= this.shutDown(reason);
+    if (!this.closing) {
+      this.finish(reason);
+      this.closing = this.shutDown();
+    }
     return this.closing;
   }
 
-  private async shutDown(reason: SessionEnd): Promise<void> {
-    if (this.ended) return;
-    this.endReason = reason;
+  private async shutDown(): Promise<void> {
     if (this.transport instanceof StreamableHTTPClientTransport) {
       // Courtesy to the server, which may keep the session in memory until told.
       await Promise.race([
@@ -300,6 +343,5 @@ export class Session {
       ]);
     }
     await this.client.close().catch(() => {});
-    this.end();
   }
 }

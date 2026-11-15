@@ -1,4 +1,3 @@
-import { ProtocolError } from "@modelcontextprotocol/client";
 import { type Fault, faultOf, sessionForgotten } from "./fault.js";
 import { type Exchange, Session, type SessionConfig } from "./session.js";
 import type {
@@ -114,9 +113,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
     return starting;
   }
 
-  function drop(server: Server, session: Session): void {
-    const entry = entries.get(server.key);
-    if (entry?.session === session) entry.session = undefined;
+  function drop(session: Session): void {
     void session.close("forgotten");
   }
 
@@ -170,6 +167,12 @@ export function createMcpClient(options: McpClientOptions): McpClient {
         exchange.sent,
         ms,
       );
+    if (exchange.lost)
+      return unreachable(
+        { reason: "disconnected", message: "the connection ended" },
+        exchange.sent,
+        ms,
+      );
     if (exchange.error === undefined)
       return unreachable(
         {
@@ -205,7 +208,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       }
       const exchange = await request(session);
       if (attempt === 0 && resendable(exchange, session, ctl)) {
-        drop(server, session);
+        drop(session);
         continue;
       }
       return { exchange, session };
@@ -291,12 +294,13 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       const timeoutMs = opts?.timeoutMs ?? connectTimeoutMs;
       const live = entries.get(server.key)?.session;
       if (live && !live.ended) {
-        const ctl = control(opts?.signal, timeoutMs);
+        // Half the time for the ping; the handshake after it gets what is left, so the whole
+        // check stays within `timeoutMs`.
+        const ctl = control(opts?.signal, timeoutMs / 2);
         try {
-          const exchange = await live.ping(ctl.signal);
-          // Some servers do not implement ping; their error reply still shows the session is alive.
-          if (exchange.error === undefined || exchange.error instanceof ProtocolError)
-            return { kind: "reachable", server: live.server, ms: ms() };
+          const { raw } = await live.ping(ctl.signal);
+          // A server without ping answers with an error, which still shows the session is alive.
+          if (raw) return { kind: "reachable", server: live.server, ms: ms() };
           if (ctl.cause === "host") return aborted(true, ms());
         } finally {
           ctl.dispose();
@@ -308,7 +312,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       try {
         const session = await Session.open(server, cfg, {
           signal: ctl.signal,
-          timeoutMs,
+          timeoutMs: Math.max(1, timeoutMs - ms()),
           idleCloseMs: 0,
         });
         await session.close();
