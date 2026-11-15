@@ -1,0 +1,17 @@
+packages:
+  - "packages/*"
+
+# Shared dev and SDK versions. `pnpm pack` writes the concrete range into each published package.json.
+catalog:
+  "@anthropic-ai/sdk": ^0.106.0
+  "@google/genai": ^3.3.0
+  "@types/node": ^24
+  jsonrepair: ^3.14.1
+  openai: ^6.45.0
+  typescript: ^6.0.3
+  vitest: ^4.1.9
+  zod: ^4.4.3
+
+# protobufjs (via @google/genai) has a postinstall that only prints a notice.
+allowBuilds:
+  protobufjs: false

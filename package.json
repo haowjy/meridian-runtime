@@ -1,0 +1,20 @@
+{
+  "name": "meridian-runtime",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.3",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "lint": "biome check .",
+    "format:write": "biome check --write .",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "check:packages": "node tools/check-package.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm check:packages"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.1",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}
