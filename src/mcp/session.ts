@@ -104,7 +104,8 @@ export class Session {
       await session.client.close().catch(() => {});
       throw error;
     }
-    session.server = session.client.getServerVersion() ?? { name: "", version: "" };
+    const info = session.client.getServerVersion();
+    session.server = { name: info?.name ?? "", version: info?.version ?? "" };
     session.protocolVersion = session.client.getNegotiatedProtocolVersion() ?? "";
     session.instructions = session.client.getInstructions();
     cfg.onEvent?.({

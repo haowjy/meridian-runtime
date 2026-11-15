@@ -15,7 +15,7 @@ export interface Behaviour {
   htmlAtHandshake: boolean;
   /** How `ping` is answered. */
   ping: "ok" | "method_not_found" | "silent";
-  /** Redirect every request here. */
+  /** Redirect every request to /mcp here (307). */
   redirectTo?: string;
   /** What a forgotten session gets. */
   forgotten: 404 | 400;
@@ -127,8 +127,8 @@ export async function startServer(overrides: Partial<Behaviour> = {}): Promise<T
       body,
     });
 
-    if (behaviour.redirectTo)
-      return void res.writeHead(302, { location: behaviour.redirectTo }).end();
+    if (behaviour.redirectTo && req.url === "/mcp")
+      return void res.writeHead(307, { location: behaviour.redirectTo }).end();
     if (behaviour.auth && !behaviour.auth(authorization?.replace(/^Bearer /, ""))) {
       return void res.writeHead(401, { "www-authenticate": "Bearer" }).end();
     }
