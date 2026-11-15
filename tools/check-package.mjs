@@ -5,6 +5,8 @@
 // entries listed in `meridianRuntime.nodeFreeEntries`. An import that only resolves inside the
 // repo, or a Node type leaking into a browser entry, fails here.
 //
+// It runs for two consumers, the repo's toolchain and the floor (TypeScript 6, @types/node 22).
+//
 // The README's first `ts` block is typechecked there too, so the npm page's example compiles.
 //
 // Usage: node tools/check-package.mjs [--keep <dir>]
@@ -15,12 +17,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const repo = resolve(import.meta.dirname, "..");
-// Consumers still on TypeScript 6 read the same declarations, so every typecheck runs under the
-// repo's compiler (7) and under 6, installed beside the tarball as `typescript6`.
-const compilers = [
-  join(repo, "node_modules/typescript/bin/tsc"),
-  "node_modules/typescript6/bin/tsc",
-];
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: "inherit" });
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 
@@ -29,15 +25,22 @@ const keepAt = args.indexOf("--keep");
 const keepDir = keepAt >= 0 ? resolve(args[keepAt + 1]) : undefined;
 
 const pkg = readJson(join(repo, "package.json"));
-const typesNode = pkg.devDependencies["@types/node"];
+// Two consumers, each with its own install: the repo's toolchain, and the oldest one the package
+// supports (TypeScript 6 reads declarations emitted by 7; `engines.node` allows Node 22).
+const consumers = [
+  {
+    name: "current",
+    typescript: pkg.devDependencies.typescript,
+    typesNode: pkg.devDependencies["@types/node"],
+  },
+  { name: "floor", typescript: "6", typesNode: "22" },
+];
 
 function check() {
   const work = mkdtempSync(join(tmpdir(), "package-consumer-"));
   try {
     const packDir = keepDir ?? join(work, "pack");
-    const project = join(work, "consumer");
     mkdirSync(packDir, { recursive: true });
-    mkdirSync(project);
 
     // pnpm pack runs prepack (build).
     run("pnpm", ["pack", "--pack-destination", packDir], repo);
@@ -59,60 +62,70 @@ function check() {
       (key) => packed.name + key.slice(1),
     );
 
-    writeFileSync(
-      join(project, "package.json"),
-      JSON.stringify({ name: "package-consumer", private: true, type: "module" }),
-    );
-    // --ignore-scripts: nothing from the registry runs during the install.
-    run(
-      "npm",
-      [
-        "install",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-        tarball,
-        `@types/node@${typesNode}`,
-        "typescript6@npm:typescript@6",
-      ],
-      project,
-    );
-
-    const typecheck = (name, source, types) => {
-      writeFileSync(join(project, `${name}.ts`), source);
+    for (const consumer of consumers) {
+      const project = join(work, `consumer-${consumer.name}`);
+      mkdirSync(project);
       writeFileSync(
-        join(project, `tsconfig.${name}.json`),
-        JSON.stringify({
-          compilerOptions: {
-            module: "nodenext",
-            moduleResolution: "nodenext",
-            target: "ES2022",
-            strict: true,
-            skipLibCheck: false,
-            noEmit: true,
-            types,
-          },
-          files: [`${name}.ts`],
-        }),
+        join(project, "package.json"),
+        JSON.stringify({ name: "package-consumer", private: true, type: "module" }),
       );
-      for (const tsc of compilers)
-        run(process.execPath, [tsc, "-p", `tsconfig.${name}.json`], project);
-    };
-    const importAll = (specifiers) =>
-      `${specifiers.map((s, i) => `import * as m${i} from "${s}";`).join("\n")}\nexport const entries = [${specifiers.map((_, i) => `m${i}`).join(", ")}];\n`;
-    typecheck("all", importAll(entries), ["node"]);
-    if (nodeFree.length > 0) typecheck("node-free", importAll(nodeFree), []);
-    const example = readFileSync(join(repo, "README.md"), "utf8").match(
-      /```ts\n([\s\S]*?)```/,
-    )?.[1];
-    if (!example) throw new Error("README.md has no ts example");
-    typecheck("readme-example", example, ["node"]);
-
-    for (const entry of entries) {
+      // --ignore-scripts: nothing from the registry runs during the install.
       run(
-        process.execPath,
-        ["--input-type=module", "-e", `await import(${JSON.stringify(entry)})`],
+        "npm",
+        [
+          "install",
+          "--ignore-scripts",
+          "--no-audit",
+          "--no-fund",
+          tarball,
+          `@types/node@${consumer.typesNode}`,
+          `typescript@${consumer.typescript}`,
+        ],
         project,
+      );
+
+      const typecheck = (name, source, types) => {
+        writeFileSync(join(project, `${name}.ts`), source);
+        writeFileSync(
+          join(project, `tsconfig.${name}.json`),
+          JSON.stringify({
+            compilerOptions: {
+              module: "nodenext",
+              moduleResolution: "nodenext",
+              target: "ES2022",
+              strict: true,
+              skipLibCheck: false,
+              noEmit: true,
+              types,
+            },
+            files: [`${name}.ts`],
+          }),
+        );
+        run(
+          process.execPath,
+          ["node_modules/typescript/bin/tsc", "-p", `tsconfig.${name}.json`],
+          project,
+        );
+      };
+      const importAll = (specifiers) =>
+        `${specifiers.map((s, i) => `import * as m${i} from "${s}";`).join("\n")}\nexport const entries = [${specifiers.map((_, i) => `m${i}`).join(", ")}];\n`;
+      typecheck("all", importAll(entries), ["node"]);
+      if (nodeFree.length > 0) typecheck("node-free", importAll(nodeFree), []);
+      const example = readFileSync(join(repo, "README.md"), "utf8").match(
+        /```ts\n([\s\S]*?)```/,
+      )?.[1];
+      if (!example) throw new Error("README.md has no ts example");
+      typecheck("readme-example", example, ["node"]);
+
+      for (const entry of entries) {
+        run(
+          process.execPath,
+          ["--input-type=module", "-e", `await import(${JSON.stringify(entry)})`],
+          project,
+        );
+      }
+      console.log(
+        `  ${consumer.name} consumer (TypeScript ${consumer.typescript}, @types/node ${consumer.typesNode}): ok`,
       );
     }
     console.log(

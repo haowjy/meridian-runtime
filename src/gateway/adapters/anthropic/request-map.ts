@@ -312,9 +312,7 @@ function mergeConsecutiveSameRole(
 //
 
 function extractSystem(messages: Message[]): string | undefined {
-  const system = textFromParts(
-    messages.filter((m) => m.role === "system").flatMap((m) => m.content),
-  );
+  const system = textFromParts(messages.flatMap((m) => (m.role === "system" ? m.content : [])));
   return system.length > 0 ? system : undefined;
 }
 

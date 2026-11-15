@@ -8,7 +8,7 @@
  */
 
 import type {
-  ContentPart,
+  AssistantContentPart,
   MediaPart,
   Message,
   ProviderOptions,
@@ -29,7 +29,7 @@ export function text(t: string, opts?: { providerOptions?: ProviderOptions }): T
     : { type: "text", text: t };
 }
 
-export function assistant(parts: ContentPart[]): Message {
+export function assistant(parts: AssistantContentPart[]): Message {
   return { role: "assistant", content: parts };
 }
 

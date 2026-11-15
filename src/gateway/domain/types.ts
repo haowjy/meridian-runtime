@@ -119,7 +119,7 @@ export type ProviderModel = Omit<ModelInfo, "wire" | "imageLinks">;
  *   OpenAI-Chat `delta.content`.
  * - MediaPart: an image or PDF: Anthropic `image`/`document` block, OpenAI
  *   `input_image`/`input_file` or Chat `image_url`/`file`, Gemini `fileData`/`inlineData`. Allowed in a user message and
- *   inside a tool result.
+ *   inside a tool result, never in an assistant message.
  * - ReasoningPart: Anthropic `thinking` / OpenAI `reasoning` items.
  *   Provider metadata (signature, encrypted_content) lives in providerOptions.
  * - ToolUsePart: Anthropic `tool_use` / OpenAI `function_call` items.
@@ -184,10 +184,13 @@ export type ContentPart = TextPart | MediaPart | ReasoningPart | ToolUsePart | T
  * Chat/Responses message shapes. The `tool` role carries tool_result parts
  * back to the provider after execution.
  */
-export interface Message {
-  role: "system" | "user" | "assistant" | "tool";
-  content: ContentPart[];
-}
+export type Message =
+  | { role: "system" | "user"; content: Array<TextPart | MediaPart> }
+  | { role: "tool"; content: ToolResultPart[] }
+  | { role: "assistant"; content: AssistantContentPart[] };
+
+/** What a model produces. No provider takes media in an assistant turn, so the type has none. */
+export type AssistantContentPart = TextPart | ReasoningPart | ToolUsePart;
 
 /**
  * A tool the caller executes, with a JSON Schema input signature. The request carries these as
