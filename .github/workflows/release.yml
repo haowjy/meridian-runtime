@@ -1,14 +1,19 @@
-# Releases each package a merged PR changed, then publishes it. See AGENTS.md, "Releasing".
+# Releases each package with changes since its last tag, then publishes it. See AGENTS.md,
+# "Releasing".
 #
-# Push to main: the `tag` job reads the PR's `release:*` label, bumps and tags each changed package
-# (tools/release.mjs). A tag pushed by hand (the first version of a package, or a backfill) or a
-# manual dispatch with `tag` skips that step and goes straight to the checks.
+# Push to main: the `tag` job looks at what main holds, not at the push: every package touched since
+# its last `<dir>-v*` tag is bumped and tagged with the strongest `release:*` label among the PRs
+# that touched it (tools/release.mjs). A cancelled, late or failed run loses nothing; the next run
+# picks it up. A tag pushed by hand (the first version of a package, or a backfill) or a manual
+# dispatch with `tag` goes straight to the checks.
 # Everything runs in this one file because npm's trusted publisher names the workflow file: on
 # npmjs.com each package's trusted publisher is this repository, `release.yml` and the `npm`
-# environment. The token for that is not a secret; it is minted per run.
+# environment. The `npm` environment allows deployments from `main` and from `*-v*` tags, so a
+# tag-push backfill can publish. The token for that is not a secret; it is minted per run.
 #
-# The job holding `id-token: write` (`publish`) checks out nothing and installs nothing: it
-# publishes the tarball `verify` built and checked, so dependency code never meets the token.
+# The job holding `id-token: write` (`publish`) checks out nothing and installs nothing from the
+# repo: it publishes the tarball `verify` built and checked, so the repo's dependency code never
+# meets the token. The only code it fetches is the pinned npm itself.
 name: Release
 
 on:
@@ -21,13 +26,14 @@ on:
         description: Existing tag to check, publish and release, such as gateway-v0.1.0
         required: true
 
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 jobs:
   tag:
     runs-on: ubuntu-latest
+    # Only this job writes to main. Runs wait one at a time, and a waiting run replaced by a newer
+    # one loses nothing: each run decides from main's state.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: read
@@ -40,20 +46,25 @@ jobs:
           ref: ${{ inputs.tag || (github.ref_type == 'branch' && 'main' || github.ref) }}
           fetch-depth: 0
 
-      - name: Bump, tag and push the packages the merged PR changed
+      # The scripts come from main, never from a tag a backfill names.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: trusted
+          persist-credentials: false
+
+      - name: Bump, tag and push the packages changed since their last tag
         id: release
         if: github.event_name == 'push' && github.ref_type == 'branch'
         env:
           GH_TOKEN: ${{ github.token }}
-          TRIGGER_SHA: ${{ github.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
-        run: node tools/release.mjs release
+        run: node trusted/tools/release.mjs release
 
       - name: Check each tag and find those not on npm yet
         id: resolve
         env:
           TAGS: ${{ steps.release.outputs.tags || inputs.tag || github.ref_name }}
-        run: node tools/release.mjs resolve "$TAGS"
+        run: node trusted/tools/release.mjs resolve "$TAGS"
 
   verify:
     needs: tag
@@ -103,6 +114,8 @@ jobs:
 
       - name: Ensure npm supports trusted publishing
         run: |
+          # Runs with the OIDC token present, but installs only the pinned npm itself: nothing from
+          # the repo or its dependencies.
           # npm 12.0.0 omits sigstore from its published bundle (npm/cli#9722).
           # Keep provenance publishing on the latest verified npm 11 release.
           npm install -g npm@11.18.0
@@ -138,6 +151,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: refs/tags/${{ matrix.release.tag }}
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: trusted
+          persist-credentials: false
       - name: Create or refresh the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -145,7 +163,7 @@ jobs:
           TITLE: ${{ matrix.release.name }}@${{ matrix.release.version }}
           VERSION: ${{ matrix.release.version }}
         run: |
-          node tools/release.mjs notes "$TAG" > "$RUNNER_TEMP/notes.md"
+          node trusted/tools/release.mjs notes "$TAG" > "$RUNNER_TEMP/notes.md"
           args=(--title "$TITLE" --prerelease="$([[ $VERSION == *-* ]] && echo true || echo false)")
           if [[ -s "$RUNNER_TEMP/notes.md" ]]; then args+=(--notes-file "$RUNNER_TEMP/notes.md"); else args+=(--generate-notes); fi
           if gh release view "$TAG" >/dev/null 2>&1; then

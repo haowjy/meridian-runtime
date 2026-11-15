@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // The release process's steps, run by .github/workflows/release.yml and pr-body.yml.
 //
-//   release              (push to main) release each package the merged PR changed: bump its
-//                        version, render its CHANGELOG.md, commit `release: <dir>-v<version>`,
-//                        tag `<dir>-v<version>`, push. Writes `tags=[...]` to $GITHUB_OUTPUT.
+//   release              release each package touched since its last tag: bump its version,
+//                        render its CHANGELOG.md, commit `release: <dir>-v<version>`, tag
+//                        `<dir>-v<version>`, push to main. Writes `tags=[...]` (the new tags and any
+//                        latest tag not on npm yet) to $GITHUB_OUTPUT.
 //   resolve <tags>       check each tag (a JSON array or one tag) and write `releases` (all) and
 //                        `unpublished` (not on npm yet) to $GITHUB_OUTPUT as JSON.
 //   notes <tag>          print the tag's CHANGELOG.md entry (the GitHub Release body).
 //   validate-pr <body-file> <base-ref>
 //                        the PR body has a valid `## Changelog` and no CHANGELOG.md is edited.
 //
-// Env for `release`: GH_TOKEN, GITHUB_REPOSITORY, TRIGGER_SHA (the pushed commit), BEFORE_SHA
-// (main before the push), GITHUB_OUTPUT.
+// Env for `release`: GH_TOKEN, GITHUB_REPOSITORY, GITHUB_OUTPUT.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { addEntry, entryBody, mergeNotes, parseNotes, renderEntry } from "./changelog.mjs";
@@ -31,7 +31,6 @@ const setOutput = (name, value) => {
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/;
 const TAG = /^(.+)-v(\d+\.\d+\.\d+(?:-rc\.\d+)?)$/;
-const RELEASE_COMMIT = /^release: (.+-v\d+\.\d+\.\d+(?:-rc\.\d+)?)$/;
 const WALK_CAP = 200;
 
 function parseVersion(text) {
@@ -68,6 +67,8 @@ export function nextVersion(versions, kind) {
   return `${core.join(".")}-rc.${Math.max(0, ...rcs) + 1}`;
 }
 
+const RANK = ["rc", "patch", "minor", "major"];
+
 // release:skip skips; patch/stable, minor, major and rc pick the bump; anything else, several kinds
 // at once, or no label at all is an rc.
 export function kindFromLabels(labels) {
@@ -77,24 +78,32 @@ export function kindFromLabels(labels) {
   if (release.includes("skip")) return "skip";
   const kinds = new Set(release.map((l) => (l === "stable" ? "patch" : l)));
   const [only] = kinds;
-  return kinds.size === 1 && ["patch", "minor", "major", "rc"].includes(only) ? only : "rc";
+  return kinds.size === 1 && RANK.includes(only) ? only : "rc";
 }
+
+// The release a set of PR kinds adds up to: the strongest (rc < patch < minor < major), or null
+// when every one is `skip`.
+export const strongestKind = (kinds) => RANK.findLast((kind) => kinds.includes(kind)) ?? null;
 
 const gh = (path) =>
   JSON.parse(out("gh", ["api", "-H", "Accept: application/vnd.github+json", path]));
 
 // The merged PR targeting main that `sha` landed through, or null for a direct push.
+const prCache = new Map();
 function prFor(sha) {
-  const merged = gh(`repos/${process.env.GITHUB_REPOSITORY}/commits/${sha}/pulls`).filter(
-    (pr) => pr.merged_at && pr.base.ref === "main",
-  );
-  const exact = merged.filter((pr) => pr.merge_commit_sha === sha);
-  const found = exact.length ? exact : merged;
-  if (found.length > 1)
-    die(
-      `commit ${sha} resolves to several merged PRs (${found.map((p) => p.number)}); not guessing`,
+  if (!prCache.has(sha)) {
+    const merged = gh(`repos/${process.env.GITHUB_REPOSITORY}/commits/${sha}/pulls`).filter(
+      (pr) => pr.merged_at && pr.base.ref === "main",
     );
-  return found[0] ?? null;
+    const exact = merged.filter((pr) => pr.merge_commit_sha === sha);
+    const found = exact.length ? exact : merged;
+    if (found.length > 1)
+      die(
+        `commit ${sha} resolves to several merged PRs (${found.map((p) => p.number)}); not guessing`,
+      );
+    prCache.set(sha, found[0] ?? null);
+  }
+  return prCache.get(sha);
 }
 
 const packageDirs = () =>
@@ -104,55 +113,20 @@ const packageDirs = () =>
     .map((path) => path.split("/")[1])
     .filter((dir) => !JSON.parse(readFileSync(`packages/${dir}/package.json`, "utf8")).private);
 
-function releaseOne(dir, kind, trigger) {
-  const tags = git("tag", "--merged", "HEAD", "--list", `${dir}-v*`)
+const versionsOf = (dir) =>
+  git("tag", "--merged", "HEAD", "--list", `${dir}-v*`)
     .split("\n")
-    .filter((t) => TAG.test(t) && TAG.exec(t)[1] === dir);
-  const versions = tags.map((t) => parseVersion(TAG.exec(t)[2]));
-  if (versions.length === 0) {
-    die(
-      `${dir} has no ${dir}-v<version> tag. Publish its first version by hand and tag it before merging changes to it (AGENTS.md, Releasing)`,
-    );
-  }
+    .filter((t) => TAG.test(t) && TAG.exec(t)[1] === dir)
+    .map((t) => parseVersion(TAG.exec(t)[2]));
 
-  // Rerun: the release commit for this trigger exists; make sure its tag does too.
-  const done = git(
-    "log",
-    "--first-parent",
-    "-F",
-    `--grep=Release-Trigger: ${trigger}`,
-    "--format=%H%x09%s",
-  )
-    .split("\n")
-    .map((line) => line.split("\t"))
-    .find(([, subject]) => RELEASE_COMMIT.exec(subject ?? "")?.[1].startsWith(`${dir}-v`));
-  if (done) {
-    const tag = RELEASE_COMMIT.exec(done[1])[1];
-    if (!tags.includes(tag)) git("tag", tag, done[0]);
-    notice(`${dir}: release for ${trigger} already committed as ${tag}`);
-    return tag;
-  }
-
-  const lastTag = `${dir}-v${maxOf(versions).text}`;
-  if (isAncestor(trigger, lastTag)) {
-    notice(`${dir}: ${trigger} is already part of ${lastTag}; nothing to release`);
-    return null;
-  }
-
-  const version = nextVersion(versions, kind);
-  const tag = `${dir}-v${version}`;
-
-  // The merged PRs that changed this package since its last release, oldest first. A stable
-  // release covers everything since the last stable one, so it carries the notes of the release
-  // candidates before it.
-  const lastStable = maxOf(versions.filter((v) => v.rc === null));
-  const since = version.includes("-") || !lastStable ? lastTag : `${dir}-v${lastStable.text}`;
+// The commits that touched the package since `ref`, oldest first, release commits left out.
+function touchedSince(dir, ref) {
   const commits = git(
     "log",
     "--first-parent",
     "--reverse",
     "--format=%H%x09%s",
-    `${since}..HEAD`,
+    `${ref}..HEAD`,
     "--",
     `packages/${dir}`,
   )
@@ -162,13 +136,47 @@ function releaseOne(dir, kind, trigger) {
     .map(([sha]) => sha);
   if (commits.length > WALK_CAP)
     die(
-      `${commits.length} commits touch ${dir} since ${since}; the walk costs one API call each and stops at ${WALK_CAP}`,
+      `${commits.length} commits touch ${dir} since ${ref}; the walk costs one API call each and stops at ${WALK_CAP}`,
     );
+  return commits;
+}
+
+// Release the package if anything touched it since its last tag, on the strongest label among the
+// PRs that did. Decided from what main holds, never from the push that started the run.
+function releaseOne(dir) {
+  const versions = versionsOf(dir);
+  if (versions.length === 0) {
+    console.log(
+      `::warning::${dir} has no ${dir}-v<version> tag, so it is not released. Publish its first version by hand and tag it (AGENTS.md, Releasing)`,
+    );
+    return null;
+  }
+  const lastTag = `${dir}-v${maxOf(versions).text}`;
+  const fresh = touchedSince(dir, lastTag);
+  if (fresh.length === 0) return null;
+
+  const kinds = fresh.map((sha) => {
+    const pr = prFor(sha);
+    if (!pr) console.log(`${sha}: no merged PR (direct push), counted as an rc`);
+    return pr ? kindFromLabels(pr.labels.map((l) => l.name)) : "rc";
+  });
+  const kind = strongestKind(kinds);
+  if (!kind) {
+    notice(`${dir}: every change since ${lastTag} is release:skip; nothing to release`);
+    return null;
+  }
+
+  const version = nextVersion(versions, kind);
+  const tag = `${dir}-v${version}`;
+
+  // A stable release covers everything since the last stable one, so it carries the notes of the
+  // release candidates before it.
+  const lastStable = maxOf(versions.filter((v) => v.rc === null));
+  const since = version.includes("-") || !lastStable ? lastTag : `${dir}-v${lastStable.text}`;
   const prs = new Map();
-  for (const sha of commits) {
+  for (const sha of touchedSince(dir, since)) {
     const pr = prFor(sha);
     if (pr) prs.set(pr.number, pr);
-    else console.log(`skipped ${sha}: no merged PR (direct push)`);
   }
   const notes = [];
   for (const pr of prs.values()) {
@@ -199,11 +207,9 @@ function releaseOne(dir, kind, trigger) {
     "commit",
     "-m",
     `release: ${tag}`,
-    "-m",
-    `Release-Trigger: ${trigger}`,
   );
   git("tag", tag);
-  console.log(`released ${tag} from ${[...prs.keys()].map((n) => `#${n}`).join(", ") || "no PRs"}`);
+  console.log(`${tag}: ${kind} release from ${[...prs.keys()].map((n) => `#${n}`).join(", ")}`);
   return tag;
 }
 
@@ -216,34 +222,38 @@ function isAncestor(commit, of) {
   }
 }
 
+// Mars's loop, in state form: a rejected push means main moved, so start over from the new main
+// instead of replaying our commit, and the release covers whatever landed meanwhile.
 function release() {
-  const trigger = process.env.TRIGGER_SHA;
-  if (!isAncestor(trigger, "HEAD"))
-    die(`${trigger} is not part of main's tip ${git("rev-parse", "HEAD")}`);
-  const pr = prFor(trigger);
-  if (!pr) {
-    notice("no merged PR for this push (a direct push or a release commit); nothing to release");
-    return setOutput("tags", "[]");
+  let released = [];
+  for (let attempt = 1; ; attempt++) {
+    git("fetch", "--quiet", "--force", "--tags", "origin", "main");
+    git("reset", "--hard", "origin/main");
+    released = packageDirs().map(releaseOne).filter(Boolean);
+    if (released.length === 0) break;
+    try {
+      git("push", "--atomic", "origin", "HEAD:main", ...released);
+      break;
+    } catch {
+      if (attempt === 3) die("could not push the release commit to main after 3 attempts");
+      console.log(
+        `::warning::push to main rejected on attempt ${attempt}; starting over from main`,
+      );
+      for (const tag of released) git("tag", "-d", tag);
+    }
   }
-  const kind = kindFromLabels(pr.labels.map((l) => l.name));
-  console.log(`PR #${pr.number}: release kind ${kind}`);
-  if (kind === "skip") return setOutput("tags", "[]");
 
-  const before = /^0+$/.test(process.env.BEFORE_SHA ?? "0")
-    ? `${trigger}^`
-    : process.env.BEFORE_SHA;
-  const changed = new Set(
-    git("diff", "--name-only", before, trigger, "--", "packages")
-      .split("\n")
-      .map((p) => p.split("/")[1]),
-  );
-  const dirs = packageDirs().filter((dir) => changed.has(dir));
-  if (dirs.length === 0) notice(`PR #${pr.number} changed no package; nothing to release`);
-
-  const tags = dirs.map((dir) => releaseOne(dir, kind, trigger)).filter(Boolean);
-  if (tags.length) git("push", "--atomic", "origin", "HEAD:main", ...tags);
-  setOutput("tags", JSON.stringify(tags));
+  // A package's latest tag that never reached npm (a failed or cancelled run) is published now.
+  const pending = packageDirs().flatMap((dir) => {
+    const latest = maxOf(versionsOf(dir));
+    if (!latest) return [];
+    const tag = `${dir}-v${latest.text}`;
+    return onNpm(manifestName(dir), latest.text) ? [] : [tag];
+  });
+  setOutput("tags", JSON.stringify([...new Set([...released, ...pending])]));
 }
+
+const manifestName = (dir) => JSON.parse(readFileSync(`packages/${dir}/package.json`, "utf8")).name;
 
 function onNpm(name, version) {
   try {
