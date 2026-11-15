@@ -120,10 +120,8 @@ export const providerFetch: typeof fetch = async (input, init) => {
  */
 export function providerClientOptions(config: ProviderConfig, defaultBaseUrl: string) {
   return {
-    // Self-hosted and mock endpoints need no key, but the SDKs require one.
-    apiKey: config.auth?.apiKey || "not-needed",
     baseURL: config.baseUrl ?? defaultBaseUrl,
-    defaultHeaders: config.auth?.headers,
+    defaultHeaders: config.headers,
     logLevel: "warn" as const,
     maxRetries: 0,
     fetch: providerFetch,
@@ -180,8 +178,12 @@ export function mapProviderHttpError(
   overrides: Partial<ProviderErrorPatterns> = {},
 ): MappedProviderError {
   const patterns = { ...DEFAULT_PATTERNS, ...overrides };
-  const status = httpStatus(err);
-  const message = errorMessage(err);
+  // A token provider that fails inside the SDK's request comes back wrapped (`APIConnectionError`,
+  // `OpenAIError`) with the provider's own error as the cause: it is classified by its status.
+  const cause = record(err)?.cause;
+  const failure = httpStatus(err) === undefined && httpStatus(cause) !== undefined ? cause : err;
+  const status = httpStatus(failure);
+  const message = errorMessage(failure);
   const mapped: { code: ErrorCode; message: string; retryable: boolean } = (() => {
     if (status === 401 || status === 403) {
       return { code: "auth_error", message, retryable: false };

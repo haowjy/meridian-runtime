@@ -5,8 +5,9 @@
  * driven for streaming. The shared stream envelope is `../provider-stream.ts`.
  */
 import Anthropic from "@anthropic-ai/sdk";
-import type { ProviderConfig } from "../../domain/index.js";
+import type { ProviderConfig, ProviderCredential } from "../../domain/index.js";
 import type { ProviderAdapter } from "../../ports/provider-adapter.js";
+import { clientForRequest, PLACEHOLDER_KEY } from "../credentials.js";
 import {
   ANTHROPIC_ENV_OPTOUT,
   type ProviderErrorPatterns,
@@ -28,11 +29,27 @@ export const ANTHROPIC_ERROR_PATTERNS: Partial<ProviderErrorPatterns> = {
   contentFiltered: /content[\s\S]*(?:filter|blocked)|(?:filter|blocked)[\s\S]*content/,
 };
 
+/**
+ * The SDK takes `apiKey` over `credentials`, and fills a missing `apiKey` or `authToken` from the
+ * environment, then, with neither, looks for a profile or federation config on disk. So a token
+ * is passed with both set to `null`, which stops all three.
+ */
+function authOptions(credential: ProviderCredential | undefined) {
+  if (credential && "accessToken" in credential) {
+    return { apiKey: null, authToken: null, credentials: credential.accessToken };
+  }
+  return { apiKey: credential?.apiKey || PLACEHOLDER_KEY, authToken: null };
+}
+
 export function createAnthropicAdapter(config: ProviderConfig): ProviderAdapter {
-  const client = new Anthropic({
+  const own = new Anthropic({
     ...providerClientOptions(config, "https://api.anthropic.com"),
     ...ANTHROPIC_ENV_OPTOUT,
+    ...authOptions(config.auth),
   });
+  const clientFor = clientForRequest(config, own, (credential) =>
+    own.withOptions(authOptions(credential)),
+  );
   const providerId = config.id;
 
   return {
@@ -43,7 +60,7 @@ export function createAnthropicAdapter(config: ProviderConfig): ProviderAdapter 
         signal: request.signal,
         errorPatterns: ANTHROPIC_ERROR_PATTERNS,
         open: () =>
-          client.messages.create(toAnthropicMessageParams(request, model, call), {
+          clientFor(request).messages.create(toAnthropicMessageParams(request, model, call), {
             signal: request.signal,
           }),
         events: (event) => eventsFromAnthropicStreamEvent(event, acc),

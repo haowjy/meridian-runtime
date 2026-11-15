@@ -228,6 +228,13 @@ export interface GenerateRequest {
   promptCacheKey?: string;
   /** Cache lifetime wanted; fixed per thread kind (`none` for one-shot calls nothing re-reads) so the cached prefix never changes mid-thread. */
   promptCacheRetention: PromptCacheRetention;
+  /**
+   * Credentials for this call, keyed by provider id. The routed provider's entry replaces that
+   * provider's `ProviderConfig.auth`; other entries are ignored, so a request re-routed to
+   * another provider never carries this one's credential. Keep the same object across calls
+   * to reuse its client and cached token.
+   */
+  auth?: Record<string, ProviderCredential>;
   /** Observability-only context; adapters must never map it into provider requests. */
   correlation?: {
     /** Preallocated by callers that need to join request content to lifecycle evidence. */
@@ -377,6 +384,30 @@ export interface ModelCallTiming {
   generationMs: number | null;
 }
 
+/**
+ * A short-lived access token and when it stops being valid (Unix seconds; `null` when unknown,
+ * which the gateway treats as valid until a call fails with 401).
+ */
+export interface AccessToken {
+  token: string;
+  expiresAt: number | null;
+}
+
+/**
+ * Mints an access token. Structurally the Anthropic SDK's `AccessTokenProvider`, so
+ * `oidcFederationProvider(...)` plugs in unchanged. `forceRefresh` asks for a new token even if
+ * the provider holds an unexpired one. The gateway caches the result and calls this once at a
+ * time per credential object.
+ */
+export type AccessTokenProvider = (opts?: { forceRefresh?: boolean }) => Promise<AccessToken>;
+
+/**
+ * What a call to one provider authenticates with: a static key, or a token provider for
+ * workload identity federation. Never serialized, traced or put in an error message by the
+ * gateway; the host must keep it out of anything it captures.
+ */
+export type ProviderCredential = { apiKey: string } | { accessToken: AccessTokenProvider };
+
 /** The provider adapters createAdapter (create-gateway.ts) can build. */
 export type BuiltinAdapter = "anthropic" | "openai" | "openai-compatible" | "gemini";
 
@@ -388,10 +419,10 @@ export type BuiltinAdapter = "anthropic" | "openai" | "openai-compatible" | "gem
 export interface ProviderConfig {
   id: string;
   adapter: BuiltinAdapter;
-  auth?: {
-    apiKey?: string;
-    headers?: Record<string, string>;
-  };
+  /** The provider's own credential, used by every call that carries none for this provider. */
+  auth?: ProviderCredential;
+  /** Extra headers sent on every request to this provider. Not a credential: nothing secret belongs here, since the host may log config. */
+  headers?: Record<string, string>;
   baseUrl?: string;
   /**
    * The host fetches image links. Whether an OpenAI-compatible host does is its own fact, so

@@ -3,8 +3,8 @@
 The model gateway. Rationale and policy: [`.context/CONTEXT.md`](.context/CONTEXT.md).
 
 - Never read `process.env` (Biome `noProcessEnv`): credentials come in through `ProviderConfig.auth`
-  or the call. The SDKs read the environment for any option left unset (`*_API_KEY`,
-  `*_BASE_URL`, `*_AUTH_TOKEN`, ...): `providerClientOptions` passes each explicitly, so a new SDK
+  or `GenerateRequest.auth` ([credentials](.context/CONTEXT.md#credentials)). The SDKs read the environment for any option left unset (`*_API_KEY`,
+  `*_BASE_URL`, `*_AUTH_TOKEN`, ...): `providerClientOptions` passes each explicitly (a token adds `apiKey: null`/`authToken: null` on Anthropic), so a new SDK
   option that defaults from `process.env` needs the same (`*_CUSTOM_HEADERS` has no opt-out).
 - `./shapes` must stay free of Node built-ins and SDKs, and imports only its own files: Flow's
   browser bundle imports it through `@meridian/contracts`. Biome enforces the imports;

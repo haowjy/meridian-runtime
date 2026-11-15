@@ -9,7 +9,8 @@
 import OpenAI from "openai";
 import type { ProviderConfig } from "../../domain/index.js";
 import type { ProviderAdapter } from "../../ports/provider-adapter.js";
-import { OPENAI_ENV_OPTOUT, providerClientOptions } from "../provider-http-error.js";
+import { bearerClientOptions, clientForRequest } from "../credentials.js";
+import { OPENAI_ENV_OPTOUT, providerClientOptions, providerFetch } from "../provider-http-error.js";
 import { streamProvider } from "../provider-stream.js";
 import { toOpenAIChatCompletionParams } from "./request-map.js";
 import {
@@ -19,10 +20,14 @@ import {
 } from "./stream-collect.js";
 
 export function createOpenAICompatibleAdapter(config: ProviderConfig): ProviderAdapter {
-  const client = new OpenAI({
+  const own = new OpenAI({
     ...providerClientOptions(config, "https://api.openai.com/v1"),
     ...OPENAI_ENV_OPTOUT,
+    ...bearerClientOptions(config.auth, providerFetch),
   });
+  const clientFor = clientForRequest(config, own, (credential) =>
+    own.withOptions(bearerClientOptions(credential, providerFetch)),
+  );
   const providerId = config.id;
 
   return {
@@ -32,7 +37,7 @@ export function createOpenAICompatibleAdapter(config: ProviderConfig): ProviderA
         start: { type: "start", model: model.id, provider: providerId },
         signal: request.signal,
         open: () =>
-          client.chat.completions.create(
+          clientFor(request).chat.completions.create(
             { ...toOpenAIChatCompletionParams(request, model, call), stream: true },
             { signal: request.signal },
           ),
