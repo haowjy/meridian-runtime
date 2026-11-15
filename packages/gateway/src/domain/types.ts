@@ -231,8 +231,9 @@ export interface GenerateRequest {
   /**
    * Credentials for this call, keyed by provider id. The routed provider's entry replaces that
    * provider's `ProviderConfig.auth`; other entries are ignored, so a request re-routed to
-   * another provider never carries this one's credential. Keep the same object across calls
-   * to reuse its client and cached token.
+   * another provider never carries this one's credential. Calls with the same key string, or the
+   * same `accessToken` function, share one client and one cached token; a credential object made
+   * fresh for each call is fine. An empty `apiKey` counts as no credential: the provider's own applies.
    */
   auth?: Record<string, ProviderCredential>;
   /** Observability-only context; adapters must never map it into provider requests. */
@@ -397,7 +398,7 @@ export interface AccessToken {
  * Mints an access token. Structurally the Anthropic SDK's `AccessTokenProvider`, so
  * `oidcFederationProvider(...)` plugs in unchanged. `forceRefresh` asks for a new token even if
  * the provider holds an unexpired one. The gateway caches the result and calls this once at a
- * time per credential object.
+ * time per token function.
  */
 export type AccessTokenProvider = (opts?: { forceRefresh?: boolean }) => Promise<AccessToken>;
 

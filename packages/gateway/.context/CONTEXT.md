@@ -25,29 +25,35 @@ A credential is `{ apiKey }` or `{ accessToken: AccessTokenProvider }` (`domain/
 returns `{ token, expiresAt }`, Unix seconds or `null`, and is structurally the Anthropic SDK's, so
 `oidcFederationProvider(...)` plugs in). Precedence: `GenerateRequest.auth[providerId]`, else
 `ProviderConfig.auth`, else none (a placeholder key, for mock and self-hosted endpoints). The request's
-map is keyed by provider id so a wrapper that re-routes a request (Flow's `LIVE_TEST_MODEL` rewrites the model) cannot send one
+map is keyed by provider id so a wrapper that re-routes a request (a host's model override) cannot send one
 provider's credential to another; entries for other providers are ignored. `ProviderConfig.headers`
 are plain extra headers, not a credential.
 
-- Each adapter derives one SDK client per credential object (`adapters/credentials.ts`, a `WeakMap`
-  over the provider's own client), so a host that keeps its credential objects keeps the token cache.
-- Anthropic: a key is `apiKey`; a token is `credentials` with `apiKey: null, authToken: null`. The SDK
-  prefers `apiKey`, fills a missing one from `ANTHROPIC_API_KEY`, and with neither reads a profile or
-  federation config from disk; the nulls stop all three. The SDK sends the Bearer and OAuth beta
-  header, refreshes before expiry, and on a 401 invalidates the token (even with `maxRetries: 0`), so
-  the next call mints a new one with `forceRefresh`.
-- OpenAI, OpenAI-compatible and Gemini: the SDK gets a placeholder key and a `fetch` that replaces
-  `Authorization` (and drops `x-goog-api-key`) with the token. `tokenSource` caches it until 60 s
-  before `expiresAt`, shares one in-flight mint per credential, and a 401 invalidates it. Doing it in
-  `fetch` rather than an async `apiKey` is what gives Gemini a Bearer at all: the SDK always sends
-  `x-goog-api-key` for a key and uses Google ADC without one, but takes a custom `fetch`. A
-  developer-API OAuth token may also need `x-goog-user-project`: set it in `ProviderConfig.headers`.
-- A 401 is `auth_error`, not retried: the gateway makes one request per attempt and a revoked token
-  is not worth another mint inside one call. The token is already invalidated for the host's next call.
+- Each adapter derives one SDK client per credential (`adapters/credentials.ts`): a `WeakMap` keyed by the
+  `accessToken` function, a `Map` keyed by the key string. A host may build the credential object
+  inline on every call and still share the client and the token cache. The key map keeps one client per
+  distinct key it has seen.
+- An empty `apiKey` is no credential, on the request and in `ProviderConfig.auth` alike: the
+  request falls back to the provider's own credential, then to the placeholder key.
+- Every wire authenticates a token the same way. The SDK gets a placeholder key and a `fetch`
+  (`bearerFetch`) that replaces `Authorization` with the token and drops `x-api-key` and
+  `x-goog-api-key`. `tokenSource` caches the token until 60 s before `expiresAt`, shares one
+  in-flight mint per token function, and a mint that rejects keeps its `forceRefresh` for the next
+  attempt. Anthropic also gets `anthropic-beta: oauth-2025-04-20` merged into any beta header. The
+  Anthropic SDK's own `credentials` is not used: its one 401 refresh needs `maxRetries` above 0,
+  which would also retry 5xx and 429 inside a call. Doing it in `fetch` rather than an async
+  `apiKey` is what gives Gemini a Bearer at all: the SDK always sends `x-goog-api-key` for a key and
+  uses Google ADC without one, but takes a custom `fetch`. A developer-API OAuth token may also
+  need `x-goog-user-project`: set it in `ProviderConfig.headers`.
+- A 401 on a request that used a token is retried once, inside `fetch`, with a freshly minted token
+  (`forceRefresh`). No response byte has reached the caller at that point, and a request body that
+  is a stream is not retried. A second 401 is `auth_error`. A 401 on a key is `auth_error` at once.
+  Concurrent rejections of one token mint once.
 - A token provider that throws ends the call with an error event, classified like an HTTP failure by
   the thrown error's `status` (403 is `auth_error`, 5xx retryable). Without a status it is a
   retryable `provider_error`. An SDK that wraps the failure (OpenAI's "Connection error.") is read
-  through `error.cause`.
+  through `error.cause`. The text is the host provider's own: the gateway adds nothing to it, so
+  the provider must keep secrets out of its error messages.
 - The gateway never serializes a request, a config or a credential into events, spans or error
   messages; error text comes from the provider's response or the token provider's own message. A
   host that captures requests must leave `auth` out: copy the fields it wants, not the request minus a denylist.
@@ -110,10 +116,8 @@ never become successful tool-use just because a call was streamed earlier.
 The dev mock selects a queued step, a built-in trigger, or its configured default,
 then sends every normal response through `adapters/mock/response.ts`. Samples,
 lorem, literal content and tool calls share JSON/SSE serialization, synthetic
-byte-derived usage and cancellation-aware pacing. `MOCK_MODEL_RESPONSE` configures
-tool-free defaults; `times` belongs only to the script queue. Deliberately malformed
-or hanging transport probes stay separate. Flow's controls and fixtures:
-[its wiring CONTEXT](https://github.com/haowjy/meridian-flow/blob/main/apps/server/server/lib/gateway/.context/CONTEXT.md#dev-mock-and-mock_model_response).
+byte-derived usage and cancellation-aware pacing. The mock's configured default response is tool-free; `times` belongs only to the script queue. Deliberately malformed
+or hanging transport probes stay separate.
 
 The compatible accumulator persists visible `reasoning_content` as a canonical
 reasoning part before text and tools. This carries no provider signature or
@@ -175,7 +179,7 @@ Provider facts and the reasons behind this are in
 every environment option (the key, Vertex mode, project, location, base URL, API version)
 only when it is unset, so the adapter passes each, and it retries nothing unless `retryOptions`
 is set, which it never is. If the machine sets both of the SDK's own Google key variables it
-prints a console warning (once per client, so once per credential), and the explicit key still wins. Facts a cold reader would miss:
+prints a console warning (once per client), and the explicit key still wins. Facts a cold reader would miss:
 
 - A tool result is a `functionResponse` named for its call, found from the earlier `tool_use`;
   results of parallel calls share one user turn (adjacent same-role messages merge).

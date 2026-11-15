@@ -29,5 +29,5 @@ Flow depends on `@meridian-flow/gateway` from npm. To run your checkout in Flow'
    `git checkout pnpm-workspace.yaml pnpm-lock.yaml && pnpm install`.
    A `link:` left in a commit fails CI's frozen install, because the path does not exist there.
 
-Then publish: bump `version` in this package (see the root `AGENTS.md`), merge, and move Flow's
-catalog entry (`'@meridian-flow/gateway'` in `pnpm-workspace.yaml`) to the new version.
+Releases bump `version` (see the root `AGENTS.md`); then move Flow's catalog entry
+(`'@meridian-flow/gateway'` in `pnpm-workspace.yaml`) to the new version.

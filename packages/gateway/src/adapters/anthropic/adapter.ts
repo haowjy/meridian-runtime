@@ -7,11 +7,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ProviderConfig, ProviderCredential } from "../../domain/index.js";
 import type { ProviderAdapter } from "../../ports/provider-adapter.js";
-import { clientForRequest, PLACEHOLDER_KEY } from "../credentials.js";
+import { bearerClientOptions, clientForRequest } from "../credentials.js";
 import {
   ANTHROPIC_ENV_OPTOUT,
   type ProviderErrorPatterns,
   providerClientOptions,
+  providerFetch,
 } from "../provider-http-error.js";
 import { streamProvider } from "../provider-stream.js";
 import { toAnthropicMessageParams } from "./request-map.js";
@@ -30,15 +31,13 @@ export const ANTHROPIC_ERROR_PATTERNS: Partial<ProviderErrorPatterns> = {
 };
 
 /**
- * The SDK takes `apiKey` over `credentials`, and fills a missing `apiKey` or `authToken` from the
- * environment, then, with neither, looks for a profile or federation config on disk. So a token
- * is passed with both set to `null`, which stops all three.
+ * A token goes through the shared `bearerFetch` (with Anthropic's OAuth beta header) instead of
+ * the SDK's `credentials`, because the SDK's one 401 refresh needs `maxRetries` above 0, which
+ * would also retry 5xx and 429 inside a call. `authToken: null` stops the SDK's environment
+ * lookup; with a key set, it never reads a profile or federation config from disk.
  */
 function authOptions(credential: ProviderCredential | undefined) {
-  if (credential && "accessToken" in credential) {
-    return { apiKey: null, authToken: null, credentials: credential.accessToken };
-  }
-  return { apiKey: credential?.apiKey || PLACEHOLDER_KEY, authToken: null };
+  return { authToken: null, ...bearerClientOptions(credential, providerFetch, "anthropic") };
 }
 
 export function createAnthropicAdapter(config: ProviderConfig): ProviderAdapter {
