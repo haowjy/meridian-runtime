@@ -33,10 +33,10 @@ pick the bump, and the strongest one wins (`rc` < `patch` < `minor` < `major`):
 | `release:patch` (or `release:stable`) | next patch, `latest`                                                      |
 | `release:minor` / `release:major`     | next minor / major, `latest`                                              |
 | `release:rc`                          | next release candidate, `0.1.1-rc.1`, `-rc.2`, ... on the `next` dist-tag |
-| `release:skip`                        | nothing now; its notes go in the package's next release (a release happens only if some PR since the last tag isn't `skip`) |
+| `release:skip`                        | nothing now; its notes go in the package's next release                   |
 | none, unknown, or conflicting labels  | a release candidate                                                       |
 
-A stable release after candidates (`release:patch` on top of `0.1.1-rc.2`) is `0.1.1`. Its entry
+A release needs at least one PR since the last tag that is not `skip`. A stable release after candidates (`release:patch` on top of `0.1.1-rc.2`) is `0.1.1`. Its entry
 covers everything since the last stable release.
 
 On a merge, `.github/workflows/release.yml` runs `tools/release.mjs` on the current `main`, not on
