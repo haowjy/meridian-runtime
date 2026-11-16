@@ -19,11 +19,11 @@ const CALL: ResolvedCall = { cacheTtlSeconds: null, longCacheWrites: false, reas
 const target = (
   id: string,
   v3 = true,
-): Pick<ModelInfo, "id" | "provider" | "wire" | "geminiV3Calls"> => ({
+): Pick<ModelInfo, "id" | "provider" | "wire" | "functionCallIds"> => ({
   id,
   provider: "gemini",
   wire: "gemini",
-  ...(v3 ? { geminiV3Calls: true as const } : {}),
+  ...(v3 ? { functionCallIds: true as const } : {}),
 });
 const IMAGE: MediaPart = {
   type: "media",

@@ -27,6 +27,10 @@ export interface ResolvedCall {
  * when asked for, so asking `none` of a model that cannot switch off gives its lowest other
  * level. With nothing to pick (no listed level is on the ladder, or the request is neither
  * listed nor on the ladder) or no request, the model's default.
+ *
+ * Differs from Mars's `resolveEffort` for a model whose row lists no level: that gets `default`
+ * for any request, where Mars returns the requested level. Such models take no effort parameter
+ * on the wire, so sending one would be rejected; the row is the data.
  */
 export function resolveReasoning(
   requested: string | undefined,

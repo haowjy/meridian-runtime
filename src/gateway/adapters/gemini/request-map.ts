@@ -50,7 +50,7 @@ export function assertCacheTtlsOnWire(model: Pick<ModelInfo, "id" | "promptCache
   }
 }
 
-type Target = Pick<ModelInfo, "id" | "provider" | "wire" | "geminiV3Calls">;
+type Target = Pick<ModelInfo, "id" | "provider" | "wire" | "functionCallIds">;
 
 function mediaPart(part: MediaPart, target: Target): Part {
   const media = wireMediaSource(target, part);
@@ -71,7 +71,7 @@ function functionResponsePart(part: MediaPart, target: Target): FunctionResponse
  * one tool stay distinct; an older model has none and pairs by name and order.
  */
 function callId(toolCallId: string, target: Target): { id?: string } {
-  return target.geminiV3Calls ? { id: toolCallId } : {};
+  return target.functionCallIds ? { id: toolCallId } : {};
 }
 
 function textOf(parts: ReadonlyArray<TextPart | { type: string }>): string {
@@ -116,7 +116,7 @@ function modelParts(message: Message, target: Target): Part[] {
     } else if (part.type === "tool_use") {
       const signature =
         thoughtSignature ??
-        (firstCall && target.geminiV3Calls ? SKIP_SIGNATURE_VALIDATION : undefined);
+        (firstCall && target.functionCallIds ? SKIP_SIGNATURE_VALIDATION : undefined);
       parts.push({
         functionCall: { ...callId(part.toolCallId, target), name: part.toolName, args: part.input },
         ...(signature ? { thoughtSignature: signature } : {}),
@@ -136,7 +136,7 @@ function toolResultParts(message: Message, calls: ToolCallPairing<string>, targe
       throw new Error(`Tool result ${result.toolCallId} has no matching tool call to name`);
     }
     const media = result.content.filter((p) => p.type === "media");
-    if (media.length > 0 && !target.geminiV3Calls) {
+    if (media.length > 0 && !target.functionCallIds) {
       throw new Error(
         `${target.id} takes no media inside a function response (Gemini 3 and later)`,
       );
@@ -210,7 +210,7 @@ export interface GeminiParams {
 
 export function toGeminiParams(
   request: GenerateRequest,
-  model: Pick<ModelInfo, "id" | "provider" | "wire" | "geminiV3Calls">,
+  model: Pick<ModelInfo, "id" | "provider" | "wire" | "functionCallIds">,
   call: ResolvedCall,
 ): GeminiParams {
   const system = request.messages

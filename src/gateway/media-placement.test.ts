@@ -170,7 +170,7 @@ describe("tool result media placement", () => {
 
 const gemini = (v3: boolean): ModelInfo => ({
   ...model("gemini"),
-  ...(v3 ? { geminiV3Calls: true as const } : {}),
+  ...(v3 ? { functionCallIds: true as const } : {}),
 });
 
 describe("placeMedia", () => {
@@ -214,7 +214,7 @@ describe("placeMedia", () => {
     });
   });
 
-  it("keys Gemini tool-result placement on the model's geminiV3Calls", () => {
+  it("keys Gemini tool-result placement on the model's functionCallIds", () => {
     const inToolResult = { mediaType: "application/pdf", inToolResult: true } as const;
     expect(placeMedia(gemini(true), inToolResult)).toEqual({
       transport: "link",

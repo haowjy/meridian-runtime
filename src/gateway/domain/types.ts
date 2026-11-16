@@ -95,15 +95,13 @@ export interface ModelInfo {
   inputModalities: readonly InputModality[];
   /** Largest file in bytes its provider fetches by link, where the provider documents one. */
   maxLinkBytes?: number;
-  /** Most pages of a PDF one request may carry, where the provider documents a cap (Anthropic: 600, 100 under a 1M-token window). Unset: no page cap; the token-fit check still applies. */
-  maxPdfPages?: number;
   /**
-   * The model speaks Gemini 3's function-call protocol: each function call carries an `id` that
-   * its result pairs with, a function response may hold media, and a replayed first call
-   * without a thought signature gets `skip_thought_signature_validator`. Unset: the older
-   * protocol (pairing by name and order, no media in a function response).
+   * Function calls carry ids their results pair with. On the Gemini wire that comes with three
+   * behaviours: each function call carries an `id`, a function response may hold media, and a
+   * replayed first call without a thought signature gets `skip_thought_signature_validator`.
+   * Unset: pairing by name and order, no media in a function response.
    */
-  geminiV3Calls?: true;
+  functionCallIds?: true;
   /** The serving host fetches image links on a wire that doesn't by default (`ProviderConfig.imageLinks`). Set by the gateway. */
   imageLinks?: true;
 }

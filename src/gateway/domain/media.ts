@@ -8,7 +8,7 @@
  * (`maxLinkBytes`); the wire format says whether a link works per kind and where a tool result's
  * media goes. Two models of one provider can differ by wire (OpenAI Chat against Responses).
  * Placement is looked up by model, not wire alone: the Gemini wire keys it on the model's
- * `geminiV3Calls` (nested `functionResponse` parts need Gemini 3), and an OpenAI-compatible host
+ * `functionCallIds` (nested `functionResponse` parts need Gemini 3), and an OpenAI-compatible host
  * may or may not fetch image links. Nothing here reads a model id: the host sets each fact.
  */
 import type { BuiltinAdapter, MediaPart, ModelInfo } from "./types.js";
@@ -36,7 +36,7 @@ interface WireMedia {
    * `inside`: in the tool result itself. `after`: in a user message right after the tool results.
    * `none`: the model can't take media in a tool result.
    */
-  toolResult: (model: Pick<ModelInfo, "geminiV3Calls">) => "inside" | "after" | "none";
+  toolResult: (model: Pick<ModelInfo, "functionCallIds">) => "inside" | "after" | "none";
 }
 
 const OPENAI_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -59,13 +59,13 @@ const WIRES: Record<BuiltinAdapter, WireMedia> = {
     imageTypes: OPENAI_IMAGE_TYPES,
     toolResult: () => "after",
   },
-  // `functionResponse.parts` needs Gemini 3 (`ModelInfo.geminiV3Calls`); any other model can't take media there.
+  // `functionResponse.parts` needs Gemini 3 (`ModelInfo.functionCallIds`); any other model can't take media there.
   gemini: {
     link: { image: true, pdf: true },
     imageTypes: ["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"],
     // Google lists only these inside a function response.
     toolResultImageTypes: ["image/png", "image/jpeg", "image/webp"],
-    toolResult: (model) => (model.geminiV3Calls ? "inside" : "none"),
+    toolResult: (model) => (model.functionCallIds ? "inside" : "none"),
   },
 };
 
@@ -85,12 +85,9 @@ function wireAccepts(wire: BuiltinAdapter, kind: MediaKind, mediaType: string): 
   return kind === "pdf" || WIRES[wire].imageTypes.includes(mediaType);
 }
 
-/** Whether a PDF of this many pages fits the model as media: under the provider's page cap and a share of its window. */
-function pdfFits(model: Pick<ModelInfo, "maxPdfPages" | "contextWindow">, pages: number): boolean {
-  return (
-    pages <= (model.maxPdfPages ?? Number.POSITIVE_INFINITY) &&
-    pages * PDF_PAGE_TOKENS <= model.contextWindow * PDF_CONTEXT_SHARE
-  );
+/** Whether a PDF of this many pages fits a share of the model's window. */
+function pdfFits(model: Pick<ModelInfo, "contextWindow">, pages: number): boolean {
+  return pages * PDF_PAGE_TOKENS <= model.contextWindow * PDF_CONTEXT_SHARE;
 }
 
 export type MediaPlacement =
@@ -101,7 +98,7 @@ export type MediaPlacement =
  * How to send a file of this type (and size, when known) to this model: as a link, as bytes, or
  * not at all. `none` covers a kind the model doesn't take, an image type its wire doesn't
  * accept (the caller can send a preview instead), a file over the provider's link limit, a PDF
- * (when its `pages` are known) too long for the model's page cap or context window, and,
+ * (when its `pages` are known) too long for the model's context window, and,
  * when `inToolResult` is set, a model that takes no media in a tool result; the caller then
  * describes the file in text. The wire decides whether a link works, so this never answers
  * `bytes` for a file a link could carry. `toolResult` says where a tool result's media go
@@ -110,13 +107,7 @@ export type MediaPlacement =
 export function placeMedia(
   model: Pick<
     ModelInfo,
-    | "wire"
-    | "inputModalities"
-    | "maxLinkBytes"
-    | "imageLinks"
-    | "contextWindow"
-    | "maxPdfPages"
-    | "geminiV3Calls"
+    "wire" | "inputModalities" | "maxLinkBytes" | "imageLinks" | "contextWindow" | "functionCallIds"
   >,
   media: { mediaType: string; sizeBytes?: number; pages?: number; inToolResult?: true },
 ): MediaPlacement {
