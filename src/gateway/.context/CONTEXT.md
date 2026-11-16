@@ -71,8 +71,8 @@ stays an error: `attempt-stream.ts` turns an `end` that follows a timeout into t
 A stop before an attempt starts, including one during retry backoff, made no call and ends the
 stream with no events and no response.
 Where the routed model is known, `attempt-stream.ts` calls `resolveCall()`
-(`domain/resolve-call.ts`) once and hands the adapter a `ResolvedCall`:
-`{ cacheTtlSeconds, longCacheWrites, reasoning: "default" | "off" | { effort } }`. Adapters
+(`domain/resolve-call.ts`, given `GatewayConfig.reasoningLevels`) once and hands the adapter a `ResolvedCall`:
+`{ cacheTtlSeconds, longCacheWrites, reasoning: "default" | { effort } }`. Adapters
 only map it to wire fields and reject at construction (`assertCacheTtlsOnWire`) a model
 whose cache lifetimes they cannot send. The host's model list (`ProviderConfig.models`) maps
 model IDs to provider adapters and carries, per model, context, pricing, cache descriptor and the
@@ -150,8 +150,10 @@ link where documented. The wire (`ModelInfo.wire`, stamped from the provider's a
 gateway is built) says whether a link works per kind and where a tool result's media goes.
 `placeMedia(model, { mediaType, sizeBytes? })` answers `link`, `bytes` or `none` plus the
 placement; it takes the model, not the wire, so the Gemini wire can key placement on the
-model's major version (nested `functionResponse` parts need Gemini 3, and `placeMedia` answers
-`none` for a file in a tool result, with `inToolResult`, for an older or unrecognised Gemini id).
+model's `functionCallIds` (nested `functionResponse` parts need Gemini 3, and `placeMedia` answers
+`none` for a file in a tool result, with `inToolResult`, for a Gemini model without it). The gateway
+never reads a model id: the host sets `functionCallIds`. A PDF is held only to the token-fit check
+(`PDF_PAGE_TOKENS` per page against `PDF_CONTEXT_SHARE` of the window); no per-provider page cap.
 It also answers `none` for an image type the wire doesn't accept (each wire lists its types), so
 the caller can send the preview instead.
 
@@ -160,7 +162,7 @@ the caller can send the preview instead.
 | `anthropic` (Messages) | image, PDF | inside `tool_result.content` as `image`/`document` blocks; an `is_error` result carries text only (Anthropic rejects media in it) and its media follow the tool results in the same user message |
 | `openai` (Responses) | image, PDF | inside `function_call_output.output` as `input_image`/`input_file` |
 | `openai-compatible` (Chat Completions) | image only, and only where the provider's `imageLinks` is set (default: bytes) | one user message after the run of `tool` messages, each attachment group named by its tool call; a PDF is bytes only (`file` with `file_data`) |
-| `gemini` (native `generateContent`) | image, PDF (`fileData`, up to 15 MB) | Gemini 3 and later: inside `functionResponse.parts` (`fileData` or `inlineData`); older: none |
+| `gemini` (native `generateContent`) | image, PDF (`fileData`, up to 15 MB) | `functionCallIds` models: inside `functionResponse.parts` (`fileData` or `inlineData`); others: none |
 
 Image types by wire: Anthropic JPEG, PNG, GIF, WebP; OpenAI and Chat Completions PNG, JPEG, WebP, GIF;
 Gemini PNG, JPEG, WebP, HEIC, HEIF (Google lists only PNG, JPEG and WebP for a function response
@@ -184,7 +186,7 @@ prints a console warning (once per client), and the explicit key still wins.
   results of parallel calls share one user turn (adjacent same-role messages merge).
 - Thought signatures live in `providerOptions.gemini.signature` beside `meridian: {provider,
   model}` on the text, reasoning or `tool_use` part they came on, and go back only to that
-  provider/model. A replayed first function call of a Gemini 3+ model without one gets
+  provider/model. A replayed first function call of a `functionCallIds` model without one gets
   `skip_thought_signature_validator`, Google's documented bypass, because Gemini 3 refuses the
   step otherwise (history from another model, or one with its thinking removed).
 - `Usage` folds thought tokens into `outputTokens` and tool-use prompt tokens into `inputTokens`.
@@ -201,8 +203,7 @@ prints a console warning (once per client), and the explicit key still wins.
 
 A model entry carries its offering's `promptCache: { kind, shortTtlSeconds, longTtlSeconds }`; `null`
 means the provider documents no lifetime, which is unknown, not infinite (a host's cache prediction
-should read it as cold). `DEFAULT_SUBAGENT_PROMPT_CACHE_TTL` (5m) and `DEFAULT_PRIMARY_PROMPT_CACHE_TTL`
-(1h) are exported as Anthropic's two lifetimes, for a host that must beat a lifetime with a buffer. Each adapter keeps one table of the
+should read it as cold). Each adapter keeps one table of the
 lifetimes its wire can express, used for both the creation-time check (`assertModelsOnWire`) and the
 request mapping (OpenAI: 30m and 12h; Anthropic: 5m and 1h, explicit models only; Gemini: none, its
 implicit cache documents no lifetime and takes no mark).
@@ -222,13 +223,21 @@ Anthropic-format request is marked the same way.
 `cache_write_tokens_details.ttl_12h_tokens`) is the long part of `cacheWriteTokens`, for a host that
 bills the two rates apart.
 
-`resolveReasoning()` turns the request into `default` (absent or `adaptive`: send no effort, on every
-adapter), `off` (`disabled`, only when the model's `reasoning.canDisable`; otherwise the lowest supported
-effort), or the nearest supported effort (a tie goes up). Wire mapping: the Anthropic adapter (Claude
-and DeepSeek) sends an effort as `output_config.effort` and `off` as `thinking: {type: "disabled"}`; the
-OpenAI Responses adapter sends `reasoning.effort` (`none` for `off`) with `summary: "auto"`; the
-`openai-compatible` adapter sends `reasoning_effort`. A model that declares `reasoning.thinksByDefault`
-gets an empty thinking block before a replayed `tool_use` unless reasoning is `off`.
+Reasoning is data. A model row's `reasoning.efforts` lists its levels (models.dev's
+`reasoning_options`, lowest first; `none` means it can switch off), and the host passes the ladder those
+names sit on as `GatewayConfig.reasoningLevels`. The package keeps no level list. `resolveReasoning(requested,
+support, levels)` (pure, exported from the browser-safe `./gateway` so a UI can show the level a call runs
+at) returns `default` for an absent request; the requested level when the model lists it; else the listed
+level nearest on the ladder (a tie goes up, never onto `none` unless `none` was asked, so asking `none` of
+a model that can't switch off gives its lowest other level); else `default` when nothing can be picked.
+A reasoning model whose row lists no level therefore gets `default` for any request, `none` included: such
+models take no effort parameter on the wire, so sending one would be rejected. This is the one place the
+gateway differs from Mars's `resolveEffort`, which would return the requested level for such a row.
+Adapters translate only where their wire spells a level differently. Anthropic (Claude and DeepSeek) sends a level as `output_config.effort` and
+`none` as `thinking: {type: "disabled"}`; OpenAI Responses sends `reasoning.effort` with `summary: "auto"` (`none` without the summary);
+`openai-compatible` sends every level as `reasoning_effort`, `none` included; Gemini sends `thinkingLevel` upper-cased
+and `none` as `thinkingBudget: 0`. A model that declares `reasoning.thinksByDefault` gets an empty thinking
+block before a replayed `tool_use` unless the call resolves to `none`.
 
 A provider row declares `projectToolSchema` (copied onto `ModelInfo`; only Anthropic) to get
 `anthropicToolSchema` on its tools; the adapter reads the flag and `model.provider`, never a provider id

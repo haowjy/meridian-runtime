@@ -19,11 +19,10 @@
  *   are not switched off prepend empty `{ type: "thinking", thinking: "" }` when an
  *   assistant message has tool_use and no thinking block. Missing tool_result
  *   is repaired earlier in context-builder `completeToolResultGroups`.
- * - Reasoning: a resolved effort goes out as `output_config.effort`; `off` (only
- *   resolved for models with a toggle, such as DeepSeek) goes out as
- *   `thinking: {type: "disabled"}`; `default` sends nothing. Opus 5.5, Sonnet 5.5
- *   and Fable 5.1 think adaptively, and `thinking: disabled` or `budget_tokens`
- *   is a 400 on them, which is why they never resolve to `off`.
+ * - Reasoning: a resolved effort goes out as `output_config.effort`; `none` (only
+ *   resolved for a model whose row lists it) goes out as `thinking: {type: "disabled"}`;
+ *   `default` sends nothing. A model that lists no `none` never resolves to off, which
+ *   matters because a model that thinks adaptively answers `thinking: disabled` with a 400.
  * - Prompt caching: when the call resolves to an explicit `cache_control`
  *   (`markCachePrefix`), the mapper marks the last system block and the last
  *   block of the two most recent wire `user` messages — three breakpoints, under
@@ -407,9 +406,9 @@ export function toAnthropicMessageParams(
       .filter((m): m is Anthropic.Messages.MessageParam => m !== null),
   );
 
-  const { reasoning } = call;
+  const effort = call.reasoning === "default" ? undefined : call.reasoning.effort;
   const repaired =
-    model.reasoning.thinksByDefault && reasoning !== "off"
+    model.reasoning.thinksByDefault && effort !== "none"
       ? ensureThinkingBeforeToolUse(messages)
       : messages;
   const plainSystem = extractSystem(request.messages);
@@ -424,7 +423,9 @@ export function toAnthropicMessageParams(
     stream: true,
     ...(system !== undefined ? { system } : {}),
     ...(tools ? { tools } : {}),
-    ...(typeof reasoning === "object" ? { output_config: { effort: reasoning.effort } } : {}),
-    ...(reasoning === "off" ? { thinking: { type: "disabled" as const } } : {}),
+    ...(effort !== undefined && effort !== "none"
+      ? { output_config: { effort: effort as "high" } }
+      : {}),
+    ...(effort === "none" ? { thinking: { type: "disabled" as const } } : {}),
   };
 }

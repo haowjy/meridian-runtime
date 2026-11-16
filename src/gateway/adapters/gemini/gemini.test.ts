@@ -16,10 +16,14 @@ import { toGeminiParams } from "./request-map.js";
 import { createStreamAccumulator, eventsFromGeminiChunk } from "./stream-collect.js";
 
 const CALL: ResolvedCall = { cacheTtlSeconds: null, longCacheWrites: false, reasoning: "default" };
-const target = (id: string): Pick<ModelInfo, "id" | "provider" | "wire"> => ({
+const target = (
+  id: string,
+  v3 = true,
+): Pick<ModelInfo, "id" | "provider" | "wire" | "functionCallIds"> => ({
   id,
   provider: "gemini",
   wire: "gemini",
+  ...(v3 ? { functionCallIds: true as const } : {}),
 });
 const IMAGE: MediaPart = {
   type: "media",
@@ -72,7 +76,9 @@ describe("Gemini request mapping", () => {
       promptCacheRetention: "none" as const,
       messages: [assistant([CALL_PART]), toolResult("c1", [IMAGE])],
     };
-    expect(() => toGeminiParams(request, target("gemini-2.5-flash"), CALL)).toThrow(/Gemini 3/);
+    expect(() => toGeminiParams(request, target("gemini-2.5-flash", false), CALL)).toThrow(
+      /Gemini 3/,
+    );
   });
 
   it("replays a signature only to the model that issued it, and bypasses validation for a foreign first call", () => {

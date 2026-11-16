@@ -10,6 +10,8 @@ import { resolveReasoning } from "../../domain/index.js";
 import { assistant, system, text, toolResult, user } from "../../helpers/messages.js";
 import { toAnthropicMessageParams } from "./request-map.js";
 
+const LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 // DeepSeek's row has a thinking toggle; Claude's has none.
 function toParams(
   request: GenerateRequest,
@@ -20,11 +22,10 @@ function toParams(
   const reasoning =
     providerId === "deepseek"
       ? {
-          efforts: ["low", "high", "max"] as const,
-          canDisable: true as const,
+          efforts: ["none", "low", "high", "max"],
           thinksByDefault: true as const,
         }
-      : { efforts: ["low", "medium", "high", "max"] as const };
+      : { efforts: ["low", "medium", "high", "max"] };
   return toAnthropicMessageParams(
     request,
     {
@@ -42,7 +43,7 @@ function toParams(
     {
       cacheTtlSeconds,
       longCacheWrites: false,
-      reasoning: resolveReasoning(request.reasoning, reasoning),
+      reasoning: resolveReasoning(request.reasoning, reasoning, LEVELS),
     },
   );
 }
@@ -105,7 +106,7 @@ describe("toAnthropicMessageParams thinking-before-tool_use repair", () => {
 
   it("does not invent thinking for Anthropic when reasoning is disabled", () => {
     const params = toParams(
-      { ...requestWithToolPair(), reasoning: "disabled" },
+      { ...requestWithToolPair(), reasoning: "none" },
       { id: "claude-sonnet-4", maxOutputTokens: 4096 },
       "anthropic",
     );

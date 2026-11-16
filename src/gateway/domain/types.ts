@@ -31,10 +31,6 @@ export type TokenizerFamily = "anthropic" | "o200k" | "gemini" | "deepseek";
 /** What a model reads as input, in the models.dev vocabulary. */
 export type InputModality = "text" | "image" | "pdf" | "audio" | "video";
 
-/** Common provider cache lifetimes in seconds (Anthropic's 5 minutes and 1 hour), for a host to put in a `PromptCacheDescriptor` or to compute a buffer from. */
-export const DEFAULT_SUBAGENT_PROMPT_CACHE_TTL = 5 * 60;
-export const DEFAULT_PRIMARY_PROMPT_CACHE_TTL = 60 * 60;
-
 /** A model's provider cache behavior and its best-known retention window. */
 export interface PromptCacheDescriptor {
   kind: "explicit" | "automatic";
@@ -60,22 +56,17 @@ export function resolvePromptCacheTtlSeconds(
   return retention === "long" ? cache.longTtlSeconds : cache.shortTtlSeconds;
 }
 
-export const REASONING_EFFORTS = ["low", "medium", "high", "max"] as const;
-export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
-
 /**
- * A model's reasoning controls, copied from its models.dev `reasoning_options`
- * (`xhigh` is not in `REASONING_EFFORTS`, so it is omitted from `efforts`).
+ * A model's reasoning levels, copied from its row (models.dev `reasoning_options`), lowest
+ * first. A host's own ladder (`GatewayConfig.reasoningLevels`) says what the names mean.
  */
 export interface ReasoningSupport {
-  /** Effort levels the model accepts. */
-  efforts: readonly ReasoningEffort[];
-  /** Whether reasoning can be turned off: a `toggle` option or a `none` effort. */
-  canDisable?: true;
+  /** The levels the model accepts. `none` means it can switch reasoning off. */
+  efforts: readonly string[];
   /**
    * The model reasons unless switched off, so the Anthropic adapter must repair a replayed
-   * tool-use turn that lost its thinking block. Declared, not inferred from `canDisable`:
-   * a model can have a toggle and still not think by default.
+   * tool-use turn that lost its thinking block. Declared, not inferred from `efforts`:
+   * a model can list `none` and still not think by default.
    */
   thinksByDefault?: true;
 }
@@ -104,6 +95,13 @@ export interface ModelInfo {
   inputModalities: readonly InputModality[];
   /** Largest file in bytes its provider fetches by link, where the provider documents one. */
   maxLinkBytes?: number;
+  /**
+   * Function calls carry ids their results pair with. On the Gemini wire that comes with three
+   * behaviours: each function call carries an `id`, a function response may hold media, and a
+   * replayed first call without a thought signature gets `skip_thought_signature_validator`.
+   * Unset: pairing by name and order, no media in a function response.
+   */
+  functionCallIds?: true;
   /** The serving host fetches image links on a wire that doesn't by default (`ProviderConfig.imageLinks`). Set by the gateway. */
   imageLinks?: true;
 }
@@ -218,7 +216,8 @@ export interface GenerateRequest {
   model?: string;
   messages: Message[];
   tools?: Tool[];
-  reasoning?: "disabled" | "adaptive" | { effort: ReasoningEffort };
+  /** A level name (`GatewayConfig.reasoningLevels`); absent means the model's own default. See `resolveReasoning`. */
+  reasoning?: string;
   signal?: AbortSignal;
   /**
    * Stable cache-routing key for one conversation (opaque, not a secret): unlike
@@ -450,6 +449,8 @@ export interface ProviderConfig {
 export interface GatewayConfig {
   providers: ProviderConfig[];
   defaultModel?: string;
+  /** The reasoning ladder, lowest first: the order `GenerateRequest.reasoning` levels compare in when a model lacks the one asked for. */
+  reasoningLevels: readonly string[];
   /** Inactivity window for one provider attempt; re-armed on every event. 0 disables. */
   attemptStallMs?: number;
   /** Absolute ceiling for one provider attempt. 0 disables. Retry/backoff is outside this window. */
