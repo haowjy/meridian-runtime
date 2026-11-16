@@ -289,12 +289,10 @@ function mapTools(tools: Tool[] | undefined): ResponsesTool[] | undefined {
 //
 // Canonical reasoning → OpenAI Responses reasoning config.
 // `default` sends only summary=auto (auto-summarization of reasoning) and leaves
-// the effort to the model; `off` is the `none` effort, which the models that
-// can disable reasoning accept.
+// the effort to the model; a resolved effort, `none` included, goes out as written.
 //
 
 function mapReasoning(reasoning: ResolvedCall["reasoning"]): object {
-  if (reasoning === "off") return { effort: "none" };
   if (reasoning === "default") return { summary: "auto" };
   return { effort: reasoning.effort, summary: "auto" };
 }

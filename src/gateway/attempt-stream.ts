@@ -193,6 +193,7 @@ export async function* streamWithRetry(
   adapter: ProviderAdapter,
   request: GenerateRequest,
   model: ModelInfo,
+  reasoningLevels: GatewayConfig["reasoningLevels"],
   retry: GatewayConfig["retry"],
   timeouts: ModelAttemptTimeouts,
   options: { now?: () => number } = {},
@@ -201,7 +202,7 @@ export async function* streamWithRetry(
   const maxAttempts = retry?.maxAttempts ?? 1;
   let delay = retry?.initialDelayMs ?? 500;
   const maxDelay = retry?.maxDelayMs ?? 10_000;
-  const call = resolveCall(request, model);
+  const call = resolveCall(request, model, reasoningLevels);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     // A stop that landed before this attempt started made no call, so it leaves no response.

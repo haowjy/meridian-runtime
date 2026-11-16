@@ -192,14 +192,16 @@ function mapTools(tools: Tool[] | undefined): GenerateContentConfig["tools"] {
 }
 
 /**
- * `default` and an effort ask for thought summaries so reasoning streams; `off` sends a zero
- * budget. `max` has no Gemini level above `high`, and no registered Gemini model lists it.
+ * `default` and an effort ask for thought summaries so reasoning streams; `none` sends a zero
+ * budget. Any other level goes out upper-cased as the model's row spelled it.
  */
 function mapThinking(reasoning: ResolvedCall["reasoning"]): ThinkingConfig {
-  if (reasoning === "off") return { thinkingBudget: 0 };
   if (reasoning === "default") return { includeThoughts: true };
-  const level = { low: "LOW", medium: "MEDIUM", high: "HIGH", max: "HIGH" }[reasoning.effort];
-  return { includeThoughts: true, thinkingLevel: level as ThinkingConfig["thinkingLevel"] };
+  if (reasoning.effort === "none") return { thinkingBudget: 0 };
+  return {
+    includeThoughts: true,
+    thinkingLevel: reasoning.effort.toUpperCase() as ThinkingConfig["thinkingLevel"],
+  };
 }
 
 export interface GeminiParams {

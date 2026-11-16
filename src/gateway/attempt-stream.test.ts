@@ -15,6 +15,7 @@ import type { ProviderAdapter } from "./ports/provider-adapter.js";
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
+const LEVELS = ["low", "medium", "high", "max"];
 const MODEL: ModelInfo = {
   id: "test-model",
   provider: "test",
@@ -111,7 +112,7 @@ describe("streamWithRetry retry gate", () => {
     const { adapter, calls } = scriptedAdapter([reasoningOnlyThenStall, textThenEnd]);
 
     const completion = collect(
-      streamWithRetry(adapter, REQUEST, MODEL, RETRY, { stallMs: 80, ceilingMs: 0 }),
+      streamWithRetry(adapter, REQUEST, MODEL, LEVELS, RETRY, { stallMs: 80, ceilingMs: 0 }),
     );
 
     await vi.advanceTimersByTimeAsync(85);
@@ -127,7 +128,7 @@ describe("streamWithRetry retry gate", () => {
     const { adapter, calls } = scriptedAdapter([textThenStall, textThenEnd]);
 
     const completion = collect(
-      streamWithRetry(adapter, REQUEST, MODEL, RETRY, { stallMs: 80, ceilingMs: 0 }),
+      streamWithRetry(adapter, REQUEST, MODEL, LEVELS, RETRY, { stallMs: 80, ceilingMs: 0 }),
     );
 
     await vi.advanceTimersByTimeAsync(80);
@@ -161,6 +162,7 @@ describe("streamWithRetry retry-after", () => {
         adapter,
         REQUEST,
         MODEL,
+        LEVELS,
         { maxAttempts: 2, initialDelayMs: 100, maxDelayMs: 100 },
         {
           stallMs: 60_000,
@@ -199,6 +201,7 @@ describe("streamWithRetry retry-after", () => {
         adapter,
         REQUEST,
         MODEL,
+        LEVELS,
         { maxAttempts: 2, initialDelayMs: 100, maxDelayMs: 100 },
         {
           stallMs: 60_000,
@@ -236,6 +239,7 @@ describe("streamWithRetry retry-after", () => {
         adapter,
         { ...REQUEST, signal: controller.signal },
         MODEL,
+        LEVELS,
         { maxAttempts: 2, initialDelayMs: 100, maxDelayMs: 100 },
         { stallMs: 60_000, ceilingMs: 0 },
       ),
@@ -282,6 +286,7 @@ describe("per-attempt timing", () => {
         adapter,
         REQUEST,
         MODEL,
+        LEVELS,
         RETRY,
         { stallMs: 60_000, ceilingMs: 0 },
         { now: () => time },

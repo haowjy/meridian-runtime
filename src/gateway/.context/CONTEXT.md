@@ -71,8 +71,8 @@ stays an error: `attempt-stream.ts` turns an `end` that follows a timeout into t
 A stop before an attempt starts, including one during retry backoff, made no call and ends the
 stream with no events and no response.
 Where the routed model is known, `attempt-stream.ts` calls `resolveCall()`
-(`domain/resolve-call.ts`) once and hands the adapter a `ResolvedCall`:
-`{ cacheTtlSeconds, longCacheWrites, reasoning: "default" | "off" | { effort } }`. Adapters
+(`domain/resolve-call.ts`, given `GatewayConfig.reasoningLevels`) once and hands the adapter a `ResolvedCall`:
+`{ cacheTtlSeconds, longCacheWrites, reasoning: "default" | { effort } }`. Adapters
 only map it to wire fields and reject at construction (`assertCacheTtlsOnWire`) a model
 whose cache lifetimes they cannot send. The host's model list (`ProviderConfig.models`) maps
 model IDs to provider adapters and carries, per model, context, pricing, cache descriptor and the
@@ -201,8 +201,7 @@ prints a console warning (once per client), and the explicit key still wins.
 
 A model entry carries its offering's `promptCache: { kind, shortTtlSeconds, longTtlSeconds }`; `null`
 means the provider documents no lifetime, which is unknown, not infinite (a host's cache prediction
-should read it as cold). `DEFAULT_SUBAGENT_PROMPT_CACHE_TTL` (5m) and `DEFAULT_PRIMARY_PROMPT_CACHE_TTL`
-(1h) are exported as Anthropic's two lifetimes, for a host that must beat a lifetime with a buffer. Each adapter keeps one table of the
+should read it as cold). Each adapter keeps one table of the
 lifetimes its wire can express, used for both the creation-time check (`assertModelsOnWire`) and the
 request mapping (OpenAI: 30m and 12h; Anthropic: 5m and 1h, explicit models only; Gemini: none, its
 implicit cache documents no lifetime and takes no mark).
@@ -222,13 +221,18 @@ Anthropic-format request is marked the same way.
 `cache_write_tokens_details.ttl_12h_tokens`) is the long part of `cacheWriteTokens`, for a host that
 bills the two rates apart.
 
-`resolveReasoning()` turns the request into `default` (absent or `adaptive`: send no effort, on every
-adapter), `off` (`disabled`, only when the model's `reasoning.canDisable`; otherwise the lowest supported
-effort), or the nearest supported effort (a tie goes up). Wire mapping: the Anthropic adapter (Claude
-and DeepSeek) sends an effort as `output_config.effort` and `off` as `thinking: {type: "disabled"}`; the
-OpenAI Responses adapter sends `reasoning.effort` (`none` for `off`) with `summary: "auto"`; the
-`openai-compatible` adapter sends `reasoning_effort`. A model that declares `reasoning.thinksByDefault`
-gets an empty thinking block before a replayed `tool_use` unless reasoning is `off`.
+Reasoning is data. A model row's `reasoning.efforts` lists its levels (models.dev's
+`reasoning_options`, lowest first; `none` means it can switch off), and the host passes the ladder those
+names sit on as `GatewayConfig.reasoningLevels`. The package keeps no level list. `resolveReasoning(requested,
+support, levels)` (pure, exported from the browser-safe `./gateway` so a UI can show the level a call runs
+at) returns `default` for an absent request; the requested level when the model lists it; else the listed
+level nearest on the ladder (a tie goes up, never onto `none` unless `none` was asked, so asking `none` of
+a model that can't switch off gives its lowest other level); else `default` when nothing can be picked.
+Adapters translate only `none`. Anthropic (Claude and DeepSeek) sends a level as `output_config.effort` and
+`none` as `thinking: {type: "disabled"}`; OpenAI Responses sends `reasoning.effort` with `summary: "auto"`;
+`openai-compatible` sends `reasoning_effort` (nothing for `none`); Gemini sends `thinkingLevel` upper-cased
+and `none` as `thinkingBudget: 0`. A model that declares `reasoning.thinksByDefault` gets an empty thinking
+block before a replayed `tool_use` unless the call resolves to `none`.
 
 A provider row declares `projectToolSchema` (copied onto `ModelInfo`; only Anthropic) to get
 `anthropicToolSchema` on its tools; the adapter reads the flag and `model.provider`, never a provider id

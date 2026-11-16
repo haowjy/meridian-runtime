@@ -88,6 +88,7 @@ export function createGateway(config: GatewayConfig): Gateway {
           route.adapter,
           request,
           route.model,
+          config.reasoningLevels,
           retry,
           resolveAttemptTimeouts(timeoutOverrides),
         );

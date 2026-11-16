@@ -19,7 +19,7 @@ const MOCK_MODEL: ProviderModel = {
   contextWindow: 128_000,
   maxOutputTokens: 4096,
   promptCache: { kind: "automatic", shortTtlSeconds: null, longTtlSeconds: null },
-  reasoning: { efforts: ["low", "medium", "high", "max"] },
+  reasoning: { efforts: ["low", "medium", "high"] },
   inputModalities: ["text", "image"],
 };
 

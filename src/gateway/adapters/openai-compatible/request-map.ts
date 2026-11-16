@@ -17,7 +17,7 @@
  * - `stream_options: { include_usage: true }` is always set so the final
  *   chunk carries cumulative token usage (per OpenAI streaming docs).
  * - Reasoning: a resolved effort goes out as `reasoning_effort`; `default` and
- *   `off` send nothing (the model's default applies).
+ *   `none` send nothing (the model's default applies).
  * - No prompt-cache marks are sent: the models on this adapter cache automatically.
  */
 import type OpenAI from "openai";
@@ -205,7 +205,9 @@ function mapTools(
 function mapReasoningEffort(
   reasoning: ResolvedCall["reasoning"],
 ): OpenAI.Chat.Completions.ChatCompletionCreateParams["reasoning_effort"] {
-  return typeof reasoning === "object" ? (reasoning.effort as "high") : undefined;
+  return typeof reasoning === "object" && reasoning.effort !== "none"
+    ? (reasoning.effort as "high")
+    : undefined;
 }
 
 /**

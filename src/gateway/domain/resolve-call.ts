@@ -6,14 +6,12 @@
 import {
   type GenerateRequest,
   type ModelInfo,
-  REASONING_EFFORTS,
-  type ReasoningEffort,
   type ReasoningSupport,
   resolvePromptCacheTtlSeconds,
 } from "./types.js";
 
-/** `default` sends nothing and leaves the model's own default; `off` is only resolved for models that can disable reasoning. */
-export type ResolvedReasoning = "default" | "off" | { effort: ReasoningEffort };
+/** `default` sends nothing and leaves the model's own default; `effort: "none"` means reasoning off. */
+export type ResolvedReasoning = "default" | { effort: string };
 
 export interface ResolvedCall {
   /** Lifetime to put on the wire for cache breakpoints; null when the provider publishes none or the retention is `none` (no mark sent). */
@@ -23,37 +21,38 @@ export interface ResolvedCall {
   reasoning: ResolvedReasoning;
 }
 
-/** The supported effort nearest the requested one; a tie goes to the higher effort. */
-function nearestEffort(requested: ReasoningEffort, supported: readonly ReasoningEffort[]) {
-  const rank = (effort: ReasoningEffort) => REASONING_EFFORTS.indexOf(effort);
-  return supported.reduce((best, effort) => {
-    const distance = Math.abs(rank(effort) - rank(requested));
-    const bestDistance = Math.abs(rank(best) - rank(requested));
-    return distance < bestDistance || (distance === bestDistance && rank(effort) > rank(best))
-      ? effort
-      : best;
-  });
-}
-
 /**
- * Resolve a canonical reasoning request against the model's facts. `adaptive` and
- * an absent request mean the model's default; `disabled` turns reasoning off only
- * when the model can, otherwise it takes the lowest supported effort.
+ * The level a call runs at. A level the model lists is used as asked. Otherwise the nearest
+ * level it lists by position in `levels`, a tie going to the higher one; `none` is only chosen
+ * when asked for, so asking `none` of a model that cannot switch off gives its lowest other
+ * level. With nothing to pick (no listed level is on the ladder, or the request is neither
+ * listed nor on the ladder) or no request, the model's default.
  */
 export function resolveReasoning(
-  requested: GenerateRequest["reasoning"],
+  requested: string | undefined,
   support: ReasoningSupport,
+  levels: readonly string[],
 ): ResolvedReasoning {
-  if (requested === undefined || requested === "adaptive") return "default";
-  if (requested === "disabled") {
-    return support.canDisable ? "off" : { effort: nearestEffort("low", support.efforts) };
+  if (requested === undefined) return "default";
+  if (support.efforts.includes(requested)) return { effort: requested };
+  const target = levels.indexOf(requested);
+  if (target < 0) return "default";
+  let best: { effort: string; distance: number; rank: number } | undefined;
+  for (const effort of support.efforts) {
+    const rank = levels.indexOf(effort);
+    if (rank < 0 || (effort === "none" && requested !== "none")) continue;
+    const distance = Math.abs(rank - target);
+    if (!best || distance < best.distance || (distance === best.distance && rank > best.rank)) {
+      best = { effort, distance, rank };
+    }
   }
-  return { effort: nearestEffort(requested.effort, support.efforts) };
+  return best ? { effort: best.effort } : "default";
 }
 
 export function resolveCall(
   request: Pick<GenerateRequest, "promptCacheRetention" | "reasoning">,
   model: Pick<ModelInfo, "promptCache" | "reasoning">,
+  levels: readonly string[],
 ): ResolvedCall {
   const { promptCache } = model;
   return {
@@ -61,6 +60,6 @@ export function resolveCall(
     longCacheWrites:
       request.promptCacheRetention === "long" &&
       promptCache.longTtlSeconds !== promptCache.shortTtlSeconds,
-    reasoning: resolveReasoning(request.reasoning, model.reasoning),
+    reasoning: resolveReasoning(request.reasoning, model.reasoning, levels),
   };
 }

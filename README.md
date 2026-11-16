@@ -27,13 +27,15 @@ The package reads no environment variable: keys, URLs and policy come in through
 ## Example
 
 A gateway with one provider and a credential chosen per call. The model row (limits, input
-kinds, reasoning efforts, cache lifetimes) is yours to declare; this one follows
+kinds, reasoning levels, cache lifetimes) is yours to declare; this one follows
 [models.dev](https://models.dev) for Claude Sonnet 5.5.
 
 ```ts
 import { createGateway, user } from "@meridian-flow/runtime/gateway";
 
 const gateway = createGateway({
+  // Your ladder of reasoning levels, lowest first: how a level a model lacks is matched to its nearest.
+  reasoningLevels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
   providers: [
     {
       id: "anthropic",
@@ -60,6 +62,7 @@ const apiKey = "key-for-this-tenant"; // read it wherever your product keeps key
 for await (const event of gateway.stream({
   model: "claude-sonnet-5-5",
   messages: [user("Say hello.")],
+  reasoning: "high", // a level name; leave it out for the model's own default
   promptCacheRetention: "none",
   auth: { anthropic: { apiKey } },
 })) {
