@@ -18,6 +18,9 @@ Node 20 or newer, ESM only.
 | `@meridian-flow/runtime/gateway/mock`        | A mock provider server for tests and local development (needs `node:http`).                                                                                                |
 | `@meridian-flow/runtime/gateway/mock-script` | The zod schemas of the mock's scripts.                                                                                                                                     |
 | `@meridian-flow/runtime/mcp`                 | A client for MCP servers over stdio and Streamable HTTP: list, call and check, with replies read off the wire, plus pure functions that pin tools for a model. Needs Node. |
+| `@meridian-flow/runtime/script`              | The script port: JavaScript a model wrote, run once with host functions, returning one JSON value. No Node built-ins.                                                      |
+| `@meridian-flow/runtime/script/quickjs`      | `createQuickJsRunner`: runs a script in QuickJS compiled to WebAssembly, in a worker thread (Node 22 or newer).                                                            |
+| `@meridian-flow/runtime/script/testing`      | The conformance suite every script runner passes, and a scripted fake runner (needs `vitest`).                                                                             |
 
 The package reads no environment variable: keys, URLs and policy come in through config or the call.
 
