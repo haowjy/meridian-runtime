@@ -190,6 +190,24 @@ describe.each([{ sse: false }, { sse: true }])("over HTTP (sse: $sse)", ({ sse }
     }
   });
 
+  it("answers concurrent calls on a session the server forgot, each from its own reply", async () => {
+    await client.call(http(), { tool: tool("echo"), arguments: {} }, { timeoutMs: 5000 });
+    for (const delayMs of [0, 20, 200]) {
+      server.forgetSessions();
+      const results = await Promise.all(
+        [1, 2, 3].map((n) =>
+          client.call(
+            http(),
+            { tool: tool("echo"), arguments: { text: `${n}`, delayMs } },
+            { timeoutMs: 5000 },
+          ),
+        ),
+      );
+      expect(results.map((r) => r.kind)).toEqual(["answered", "answered", "answered"]);
+    }
+    await client.close();
+  });
+
   it("asks for a token before every request, and refreshes once after a 401", async () => {
     let current = "old";
     server.behaviour.auth = (token) => token === "new";

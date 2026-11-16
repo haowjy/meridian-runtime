@@ -113,10 +113,6 @@ export function createMcpClient(options: McpClientOptions): McpClient {
     return starting;
   }
 
-  function drop(session: Session): void {
-    void session.close("forgotten");
-  }
-
   const unreachable = (fault: Fault, sent: boolean, ms: number): Unreachable => ({
     kind: "unreachable",
     ...fault,
@@ -208,7 +204,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       }
       const exchange = await request(session);
       if (attempt === 0 && resendable(exchange, session, ctl)) {
-        drop(session);
+        void session.close("forgotten");
         continue;
       }
       return { exchange, session };

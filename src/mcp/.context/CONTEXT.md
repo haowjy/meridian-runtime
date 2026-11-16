@@ -35,8 +35,8 @@ A reply over `maxReplyBytes` is stopped before it is read into memory.
   settle then, not when the child exits: `too_large` for the only one in flight, `disconnected`
   for the others.
 - **HTTP:** `reply-limit.ts` wraps the host's `fetch` and stops a POST reply at the limit
-  (`Content-Length` first, then a counting stream), whatever the body of the POST. A JSON reply makes the SDK's `send` reject. An
-  SSE reply does not: the SDK logs the stream error and the call waits until its timeout, so the
+  (`Content-Length` first, then a counting stream), whatever the body of the POST. A JSON reply
+  makes the SDK's `send` reject. An SSE reply does not: the SDK logs the stream error and the call waits until its timeout, so the
   wrapper names the request (its id, read from the POST body) and the call is aborted at once. The
   session stays. The GET event stream is not metered.
 
@@ -47,8 +47,11 @@ start. A session is `ended` and leaves the registry the moment anything starts e
 idle timer, reply over the limit, transport closing), through one method, `finish`. The teardown
 that follows (an HTTP `DELETE`, a stdio child exiting) can take seconds, and a call that lands
 meanwhile starts a new session. `sent` is true once the transport took the request, and is
-cleared when the transport says it was not connected, so that call may go to a new session. `call_timeout`, `aborted`, `too_large` on HTTP and the HTTP status faults end only the call
-(an abort or timeout sends MCP's cancel notice). A failed start fails calls at once for
+cleared when the transport says it was not connected, so that call may go to a new session.
+Ending a session settles the calls in flight as lost, except when the server forgot it
+(`forgotten`): each of those calls reads its own reply, and its own 404 sends it once to the new
+session. `call_timeout`, `aborted`, `too_large` on HTTP and the HTTP status faults end only the
+call (an abort or timeout sends MCP's cancel notice). A failed start fails calls at once for
 `failFastMs`, with the same fault. A dead stdio child starts again on the next call. A call is
 sent again only when it provably did not run: the HTTP server forgot the session (404, or a 400
 mentioning the session), or the session was already gone before the request left.

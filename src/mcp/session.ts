@@ -242,7 +242,9 @@ export class Session {
     clearTimeout(this.idleTimer);
     this.cfg.onEvent?.({ type: "session_ended", key: this.key, reason });
     this.onEnded?.(reason);
-    // The calls in flight settle now, not when a child process finally exits.
+    // No more replies are coming, so the calls in flight settle now, not when a child process
+    // finally exits. A forgotten session is different: each call's own reply is still on the wire.
+    if (reason === "forgotten") return;
     for (const [exchange, abort] of this.aborts) {
       exchange.lost = true;
       abort();

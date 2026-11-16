@@ -21,8 +21,8 @@ function requestId(init: RequestInit | undefined): number | string | undefined {
 /**
  * Wraps the host's `fetch` so a reply to a JSON-RPC request is stopped at `limit` bytes, before
  * it is read into memory. Only POST replies are metered: the long-lived GET event stream is not
- * one reply. `onOver` names the request (when its body shows an id), because the SDK swallows a stream error on an SSE reply
- * and leaves the call waiting until its timeout.
+ * one reply. `onOver` names the request (when its body shows an id), because the SDK swallows a
+ * stream error on an SSE reply and leaves the call waiting until its timeout.
  */
 export function limitReplies(
   inner: Fetch,
