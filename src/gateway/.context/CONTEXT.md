@@ -150,8 +150,10 @@ link where documented. The wire (`ModelInfo.wire`, stamped from the provider's a
 gateway is built) says whether a link works per kind and where a tool result's media goes.
 `placeMedia(model, { mediaType, sizeBytes? })` answers `link`, `bytes` or `none` plus the
 placement; it takes the model, not the wire, so the Gemini wire can key placement on the
-model's major version (nested `functionResponse` parts need Gemini 3, and `placeMedia` answers
-`none` for a file in a tool result, with `inToolResult`, for an older or unrecognised Gemini id).
+model's `geminiV3Calls` (nested `functionResponse` parts need Gemini 3, and `placeMedia` answers
+`none` for a file in a tool result, with `inToolResult`, for a Gemini model without it). The gateway
+never reads a model id: `maxPdfPages` (a PDF over it is `none`; unset means no page cap) and
+`geminiV3Calls` are set by the host.
 It also answers `none` for an image type the wire doesn't accept (each wire lists its types), so
 the caller can send the preview instead.
 
@@ -160,7 +162,7 @@ the caller can send the preview instead.
 | `anthropic` (Messages) | image, PDF | inside `tool_result.content` as `image`/`document` blocks; an `is_error` result carries text only (Anthropic rejects media in it) and its media follow the tool results in the same user message |
 | `openai` (Responses) | image, PDF | inside `function_call_output.output` as `input_image`/`input_file` |
 | `openai-compatible` (Chat Completions) | image only, and only where the provider's `imageLinks` is set (default: bytes) | one user message after the run of `tool` messages, each attachment group named by its tool call; a PDF is bytes only (`file` with `file_data`) |
-| `gemini` (native `generateContent`) | image, PDF (`fileData`, up to 15 MB) | Gemini 3 and later: inside `functionResponse.parts` (`fileData` or `inlineData`); older: none |
+| `gemini` (native `generateContent`) | image, PDF (`fileData`, up to 15 MB) | `geminiV3Calls` models: inside `functionResponse.parts` (`fileData` or `inlineData`); others: none |
 
 Image types by wire: Anthropic JPEG, PNG, GIF, WebP; OpenAI and Chat Completions PNG, JPEG, WebP, GIF;
 Gemini PNG, JPEG, WebP, HEIC, HEIF (Google lists only PNG, JPEG and WebP for a function response
@@ -184,7 +186,7 @@ prints a console warning (once per client), and the explicit key still wins.
   results of parallel calls share one user turn (adjacent same-role messages merge).
 - Thought signatures live in `providerOptions.gemini.signature` beside `meridian: {provider,
   model}` on the text, reasoning or `tool_use` part they came on, and go back only to that
-  provider/model. A replayed first function call of a Gemini 3+ model without one gets
+  provider/model. A replayed first function call of a `geminiV3Calls` model without one gets
   `skip_thought_signature_validator`, Google's documented bypass, because Gemini 3 refuses the
   step otherwise (history from another model, or one with its thinking removed).
 - `Usage` folds thought tokens into `outputTokens` and tool-use prompt tokens into `inputTokens`.
@@ -229,7 +231,7 @@ at) returns `default` for an absent request; the requested level when the model 
 level nearest on the ladder (a tie goes up, never onto `none` unless `none` was asked, so asking `none` of
 a model that can't switch off gives its lowest other level); else `default` when nothing can be picked.
 Adapters translate only `none`. Anthropic (Claude and DeepSeek) sends a level as `output_config.effort` and
-`none` as `thinking: {type: "disabled"}`; OpenAI Responses sends `reasoning.effort` with `summary: "auto"`;
+`none` as `thinking: {type: "disabled"}`; OpenAI Responses sends `reasoning.effort` with `summary: "auto"` (`none` without the summary);
 `openai-compatible` sends `reasoning_effort` (nothing for `none`); Gemini sends `thinkingLevel` upper-cased
 and `none` as `thinkingBudget: 0`. A model that declares `reasoning.thinksByDefault` gets an empty thinking
 block before a replayed `tool_use` unless the call resolves to `none`.

@@ -168,7 +168,10 @@ describe("tool result media placement", () => {
   });
 });
 
-const gemini = (id: string): ModelInfo => ({ ...model("gemini"), id });
+const gemini = (v3: boolean): ModelInfo => ({
+  ...model("gemini"),
+  ...(v3 ? { geminiV3Calls: true as const } : {}),
+});
 
 describe("placeMedia", () => {
   it("answers link, bytes or none from the wire, the modalities and the link limit", () => {
@@ -205,21 +208,20 @@ describe("placeMedia", () => {
       transport: "none",
     });
     expect(placeMedia(model("openai"), { mediaType: "image/bmp" })).toEqual({ transport: "none" });
-    expect(placeMedia(gemini("gemini-3.1-flash-lite"), { mediaType: "image/heic" })).toEqual({
+    expect(placeMedia(gemini(true), { mediaType: "image/heic" })).toEqual({
       transport: "link",
       toolResult: "inside",
     });
   });
 
-  it("keys Gemini tool-result placement on the model's major version", () => {
+  it("keys Gemini tool-result placement on the model's geminiV3Calls", () => {
     const inToolResult = { mediaType: "application/pdf", inToolResult: true } as const;
-    expect(placeMedia(gemini("gemini-3.1-flash-lite"), inToolResult)).toEqual({
+    expect(placeMedia(gemini(true), inToolResult)).toEqual({
       transport: "link",
       toolResult: "inside",
     });
-    expect(placeMedia(gemini("gemini-2.5-flash"), inToolResult)).toEqual({ transport: "none" });
-    expect(placeMedia(gemini("gemma-whatever"), inToolResult)).toEqual({ transport: "none" });
-    expect(placeMedia(gemini("gemini-2.5-flash"), { mediaType: "application/pdf" })).toEqual({
+    expect(placeMedia(gemini(false), inToolResult)).toEqual({ transport: "none" });
+    expect(placeMedia(gemini(false), { mediaType: "application/pdf" })).toEqual({
       transport: "link",
       toolResult: "none",
     });

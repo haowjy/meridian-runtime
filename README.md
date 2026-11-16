@@ -49,7 +49,7 @@ const gateway = createGateway({
           maxOutputTokens: 128_000,
           tokenizer: "anthropic",
           inputModalities: ["text", "image", "pdf"],
-          reasoning: { efforts: ["low", "medium", "high", "max"] },
+          reasoning: { efforts: ["low", "medium", "high", "xhigh", "max"] },
           promptCache: { kind: "explicit", shortTtlSeconds: 300, longTtlSeconds: 3600 },
         },
       ],
