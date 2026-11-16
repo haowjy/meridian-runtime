@@ -42,6 +42,30 @@
       }
     },
     {
+      "includes": ["src/script/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["../gateway", "../gateway/*", "../../gateway", "../../gateway/*"],
+                    "message": "./script imports nothing from ./gateway."
+                  },
+                  {
+                    "group": ["../mcp", "../mcp/*", "../../mcp", "../../mcp/*"],
+                    "message": "./script imports nothing from ./mcp."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["src/mcp/gateway-types.test.ts"],
       "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
     },
