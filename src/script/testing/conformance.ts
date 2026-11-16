@@ -452,6 +452,18 @@ export function describeScriptRunner(
         expect(message.length).toBeLessThan(10_000);
       });
 
+      it("reports an error thrown by code that ends the wrapper, without reading it in the script", async () => {
+        const made = runner();
+        const started = await made.run(
+          request("}); (function () { throw { toJSON() { return 'x'; } } "),
+        );
+        expect(started).toMatchObject({ kind: "threw" });
+        const compiled = await made.run(
+          request("}); throw { get name() { for (;;) {} } }; (function () { "),
+        );
+        expect(compiled.kind).toBe("timed_out");
+      });
+
       it("ends every run still going as aborted when the runner closes", async () => {
         const made = runner();
         const pending = made.run(request("await new Promise(() => {})", { wallMs: 20_000 }));

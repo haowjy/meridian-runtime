@@ -23,6 +23,8 @@ export interface QuickJsRunnerOptions {
 const DEFAULT_MEMORY_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT = 16;
 const MIN_MEMORY_BYTES = 1024 * 1024;
+// WebAssembly allows 65536 pages of 64 KiB; the worker adds the 16 MiB the instance starts with.
+const MAX_MEMORY_BYTES = 65536 * 65536 - 16 * 1024 * 1024;
 /** The longest `setTimeout` delay; a longer one fires after 1 ms. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 /** Longest error name, error message or unavailable message a worker may send, in UTF-16 units. */
@@ -47,9 +49,12 @@ type WorkerMessage =
 export function createQuickJsRunner(options: QuickJsRunnerOptions = {}): ScriptRunner {
   const memoryBytes = options.memoryBytes ?? DEFAULT_MEMORY_BYTES;
   const maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
-  if (!(maxConcurrent >= 1)) throw new TypeError("maxConcurrent must be at least 1");
-  if (!(memoryBytes >= MIN_MEMORY_BYTES) || !Number.isFinite(memoryBytes))
-    throw new TypeError(`memoryBytes must be a number of at least ${MIN_MEMORY_BYTES}`);
+  if (!Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1)
+    throw new TypeError("maxConcurrent must be a positive integer");
+  if (!(memoryBytes >= MIN_MEMORY_BYTES && memoryBytes <= MAX_MEMORY_BYTES))
+    throw new TypeError(
+      `memoryBytes must be a number from ${MIN_MEMORY_BYTES} to ${MAX_MEMORY_BYTES}`,
+    );
 
   // A bundle that lost the worker or the .wasm fails here, at server start, and not on the first
   // run a writer's model makes.

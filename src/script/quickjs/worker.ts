@@ -254,42 +254,12 @@ async function main(): Promise<void> {
     );
   });
 
-  const compiled = inEngine(() => context.evalCode(`${WRAPPER_OPEN}${init.code}\n})`, "script"));
-  if (compiled.error) {
-    const error = context.dump(compiled.error) as {
-      name?: string;
-      message?: string;
-      stack?: string;
-    };
-    finish({
-      type: "done",
-      kind: "threw",
-      name: String(error.name ?? "SyntaxError"),
-      message: String(error.message),
-      ...locate(String(error.stack ?? "")),
-    });
-    return;
-  }
-
-  const started = inEngine(() => context.callFunction(compiled.value, context.undefined));
-  if (started.error)
-    throw new Error(`script start failed: ${JSON.stringify(context.dump(started.error))}`);
-  const promise = started.value;
-
-  // The script's promise is read from the engine, never through `then`, which the script can
-  // replace. A promise settles only while jobs run, so this is checked after each pump.
-  function settle(): void {
+  // Every guest value, an error included, is read by finalize and never by dump: the script
+  // controls what its own values do when read.
+  function report(ok: boolean, value: QuickJSHandle): void {
     if (finished) return;
-    const state = context.getPromiseState(promise);
-    if (state.type === "pending") return;
-    const ok = state.type === "fulfilled";
     const outcome = inEngine(() =>
-      context.callFunction(
-        finalize,
-        context.undefined,
-        ok ? context.true : context.false,
-        ok ? state.value : state.error,
-      ),
+      context.callFunction(finalize, context.undefined, ok ? context.true : context.false, value),
     );
     // Only running out of memory can fail here: the prelude catches whatever the script's own
     // values throw.
@@ -309,6 +279,28 @@ async function main(): Promise<void> {
         .map((line) => JSON.parse(line) as string);
       finish({ type: "done", kind: "threw", name, message, ...locate(stack) });
     }
+  }
+
+  const compiled = inEngine(() => context.evalCode(`${WRAPPER_OPEN}${init.code}\n})`, "script"));
+  if (compiled.error) {
+    report(false, compiled.error);
+    return;
+  }
+
+  const started = inEngine(() => context.callFunction(compiled.value, context.undefined));
+  if (started.error) {
+    report(false, started.error);
+    return;
+  }
+  const promise = started.value;
+
+  // The script's promise is read from the engine, never through `then`, which the script can
+  // replace. A promise settles only while jobs run, so this is checked after each pump.
+  function settle(): void {
+    if (finished) return;
+    const state = context.getPromiseState(promise);
+    if (state.type === "pending") return;
+    report(state.type === "fulfilled", state.type === "fulfilled" ? state.value : state.error);
   }
 
   const pump = () => {
