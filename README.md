@@ -11,12 +11,13 @@ Node 20 or newer, ESM only.
 
 ## Entries
 
-| Entry                                        | What it is                                                                                                                                                 |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@meridian-flow/runtime/gateway`             | One streaming `Gateway` over Anthropic, OpenAI, Gemini and OpenAI-compatible providers: retries, deadlines, usage normalization and a credential per call. |
-| `@meridian-flow/runtime/gateway/shapes`      | The gateway's usage, provider-error and JSON types. No Node built-ins and no SDKs, so a browser bundle can import them.                                    |
-| `@meridian-flow/runtime/gateway/mock`        | A mock provider server for tests and local development (needs `node:http`).                                                                                |
-| `@meridian-flow/runtime/gateway/mock-script` | The zod schemas of the mock's scripts.                                                                                                                     |
+| Entry                                        | What it is                                                                                                                                                                 |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@meridian-flow/runtime/gateway`             | One streaming `Gateway` over Anthropic, OpenAI, Gemini and OpenAI-compatible providers: retries, deadlines, usage normalization and a credential per call.                 |
+| `@meridian-flow/runtime/gateway/shapes`      | The gateway's usage, provider-error and JSON types. No Node built-ins and no SDKs, so a browser bundle can import them.                                                    |
+| `@meridian-flow/runtime/gateway/mock`        | A mock provider server for tests and local development (needs `node:http`).                                                                                                |
+| `@meridian-flow/runtime/gateway/mock-script` | The zod schemas of the mock's scripts.                                                                                                                                     |
+| `@meridian-flow/runtime/mcp`                 | A client for MCP servers over stdio and Streamable HTTP: list, call and check, with replies read off the wire, plus pure functions that pin tools for a model. Needs Node. |
 
 The package reads no environment variable: keys, URLs and policy come in through config or the call.
 
