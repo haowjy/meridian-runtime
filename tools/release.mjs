@@ -7,8 +7,10 @@
 //                        latest tag if it is not on npm yet) to $GITHUB_OUTPUT.
 //   resolve <tags>       check each tag (a JSON array or one tag) and write `unpublished` (the ones
 //                        not on npm yet) to $GITHUB_OUTPUT as JSON.
-//   github-releases      create a GitHub Release for every `v*` tag whose version is on npm and has
-//                        none yet.
+//   github-releases [published]
+//                        create a GitHub Release for every `v*` tag that has none and is on npm, or
+//                        is in `published` (a JSON array of release objects whose publish this run
+//                        just succeeded at: the registry can lag a publish by minutes).
 //   validate-pr <body-file> <base-ref>
 //                        the PR body has a valid `## Changelog` and CHANGELOG.md is not edited.
 //
@@ -314,8 +316,10 @@ function notes(tag) {
 }
 
 // Every step is decided from state: a tag on npm with no GitHub Release gets one, whichever run
-// published it, and a tag not on npm never does.
-function githubReleases() {
+// published it, and a tag not on npm never does. `published` tags skip the registry check: this
+// run's publish job succeeded for them, and `npm view` may not serve them yet.
+function githubReleases(published = "[]") {
+  const justPublished = new Set(JSON.parse(published || "[]").map((r) => r.tag));
   const existing = new Set(
     JSON.parse(out("gh", ["release", "list", "--limit", "1000", "--json", "tagName"])).map(
       (r) => r.tagName,
@@ -324,7 +328,7 @@ function githubReleases() {
   const { name } = manifest();
   for (const tag of git("tag", "--list", "v*").split("\n").filter(Boolean)) {
     const m = TAG.exec(tag);
-    if (!m || existing.has(tag) || !onNpm(name, m[1])) continue;
+    if (!m || existing.has(tag) || !(justPublished.has(tag) || onNpm(name, m[1]))) continue;
     const version = m[1];
     const body = notes(tag);
     const args = [
@@ -366,7 +370,7 @@ if (import.meta.filename === process.argv[1]) {
   const commands = {
     release,
     resolve: () => resolve(args[0]),
-    "github-releases": githubReleases,
+    "github-releases": () => githubReleases(args[0]),
     "validate-pr": () => validatePr(args[0], args[1]),
   };
   if (!commands[command]) die(`usage: release.mjs ${Object.keys(commands).join("|")}`);

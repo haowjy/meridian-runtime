@@ -6,7 +6,7 @@
 # and tagged with the strongest `release:*` label among the PRs that changed it. A cancelled, late
 # or failed run loses nothing; the next run picks it up. Every step is decided from state, so
 # overlapping runs agree: `publish` skips a version already on npm, and `github-releases` makes a
-# Release for any tag on npm that has none.
+# Release for any tag on npm that has none, or that `publish` just succeeded for in this run.
 # A manual dispatch with `tag` (a backfill) runs the same steps for that tag. A tag push starts
 # nothing.
 # Everything runs in this one file because npm's trusted publisher names the workflow file: on
@@ -155,7 +155,10 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - run: node tools/release.mjs github-releases
+      # A tag whose publish succeeded in this run is on npm even if the registry doesn't serve it
+      # yet; older tags are checked against the registry.
+      - run: node tools/release.mjs github-releases "$PUBLISHED"
         env:
+          PUBLISHED: ${{ needs.publish.result == 'success' && needs.tag.outputs.unpublished || '[]' }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
